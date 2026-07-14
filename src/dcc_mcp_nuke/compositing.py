@@ -105,7 +105,7 @@ def build_layered_comp(nuke: Any, manifest: Mapping[str, Any]) -> dict[str, Any]
 
     script = Path(spec["script_path"])
     script.parent.mkdir(parents=True, exist_ok=True)
-    nuke.scriptSaveAs(_nuke_path(script))
+    _save_script(nuke, script)
     return {
         "script_path": str(script),
         "output_path": str(output),
@@ -128,6 +128,11 @@ def _connect_merge(merge: Any, background: Any, foreground: Any) -> None:
     """Connect Nuke Merge B (background) and A (foreground) inputs explicitly."""
     merge.setInput(0, background)
     merge.setInput(1, foreground)
+
+
+def _save_script(nuke: Any, path: str | Path) -> None:
+    """Save without a GUI overwrite prompt so repeated builds stay idempotent."""
+    nuke.scriptSaveAs(_nuke_path(path), overwrite=1)
 
 
 def _node_name(value: str, fallback: str) -> str:

@@ -5,6 +5,7 @@ import pytest
 from dcc_mcp_nuke.compositing import (
     _connect_merge,
     _nuke_path,
+    _save_script,
     _set_read_frame_range,
     validate_manifest,
 )
@@ -97,3 +98,17 @@ def test_merge_connects_existing_comp_as_background_and_new_layer_as_foreground(
     _connect_merge(merge, background="beauty", foreground="information")
 
     assert merge.inputs == {0: "beauty", 1: "information"}
+
+
+def test_script_save_is_non_interactive_and_idempotent():
+    class Nuke:
+        def __init__(self):
+            self.saved = None
+
+        def scriptSaveAs(self, path, overwrite):
+            self.saved = (path, overwrite)
+
+    nuke = Nuke()
+    _save_script(nuke, r"C:\renders\final.nk")
+
+    assert nuke.saved == ("C:/renders/final.nk", 1)
