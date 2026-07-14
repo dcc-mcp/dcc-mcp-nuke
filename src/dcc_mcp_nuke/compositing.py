@@ -92,8 +92,7 @@ def build_layered_comp(nuke: Any, manifest: Mapping[str, Any]) -> dict[str, Any]
         merge = nuke.nodes.Merge2()
         merge.setName(f"Merge_{index + 1:02d}_{layer['operation']}")
         merge["operation"].setValue(layer["operation"])
-        merge.setInput(0, read)
-        merge.setInput(1, current)
+        _connect_merge(merge, background=current, foreground=read)
         current = merge
 
     output = Path(spec["output_path"])
@@ -123,6 +122,12 @@ def _set_read_frame_range(read: Any, first: int, last: int) -> None:
     for name, value in (("first", first), ("last", last), ("origfirst", first), ("origlast", last)):
         if name in knobs:
             read[name].setValue(value)
+
+
+def _connect_merge(merge: Any, background: Any, foreground: Any) -> None:
+    """Connect Nuke Merge B (background) and A (foreground) inputs explicitly."""
+    merge.setInput(0, background)
+    merge.setInput(1, foreground)
 
 
 def _node_name(value: str, fallback: str) -> str:

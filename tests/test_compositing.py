@@ -2,7 +2,12 @@ from pathlib import Path
 
 import pytest
 
-from dcc_mcp_nuke.compositing import _nuke_path, _set_read_frame_range, validate_manifest
+from dcc_mcp_nuke.compositing import (
+    _connect_merge,
+    _nuke_path,
+    _set_read_frame_range,
+    validate_manifest,
+)
 from dcc_mcp_nuke.plugin import is_gui_host
 
 
@@ -78,3 +83,17 @@ def test_read_nodes_use_manifest_frame_range():
         "origfirst": 1001,
         "origlast": 1100,
     }
+
+
+def test_merge_connects_existing_comp_as_background_and_new_layer_as_foreground():
+    class Merge:
+        def __init__(self):
+            self.inputs = {}
+
+        def setInput(self, index, node):
+            self.inputs[index] = node
+
+    merge = Merge()
+    _connect_merge(merge, background="beauty", foreground="information")
+
+    assert merge.inputs == {0: "beauty", 1: "information"}
