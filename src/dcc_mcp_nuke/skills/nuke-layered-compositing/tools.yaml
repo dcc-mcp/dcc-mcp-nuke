@@ -1,0 +1,52 @@
+tools:
+  - name: build_layered_comp
+    description: Replace the current graph with an explicit layered Read/Merge/Write comp and save the .nk script.
+    input_schema:
+      type: object
+      required: [manifest]
+      properties:
+        manifest:
+          type: object
+          required: [script_path, output_path, layers]
+          properties:
+            script_path: {type: string}
+            output_path: {type: string}
+            first_frame: {type: integer, minimum: 0, default: 1}
+            last_frame: {type: integer, minimum: 0, default: 1}
+            width: {type: integer, minimum: 1, default: 1920}
+            height: {type: integer, minimum: 1, default: 1080}
+            fps: {type: number, exclusiveMinimum: 0, default: 30}
+            layers:
+              type: array
+              minItems: 1
+              items:
+                type: object
+                required: [path]
+                properties:
+                  name: {type: string}
+                  path: {type: string}
+                  operation: {type: string, enum: [over, plus, multiply, screen, max, min], default: over}
+                  colorspace: {type: string}
+    read_only: false
+    destructive: true
+    idempotent: true
+    execution: sync
+    affinity: main
+    timeout_hint_secs: 120
+    source_file: scripts/build_layered_comp.py
+  - name: render_write_node
+    description: Render an explicit Nuke Write node over an inclusive frame range.
+    input_schema:
+      type: object
+      required: [write_node, first_frame, last_frame]
+      properties:
+        write_node: {type: string}
+        first_frame: {type: integer, minimum: 0}
+        last_frame: {type: integer, minimum: 0}
+    read_only: false
+    destructive: true
+    idempotent: true
+    execution: async
+    affinity: main
+    timeout_hint_secs: 7200
+    source_file: scripts/render_write_node.py
