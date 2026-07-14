@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.3.0](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.2.0...v0.3.0) (2026-07-14)
+
+
+### Features
+
+* add layered Nuke compositing ([#2](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/2)) ([178d16b](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/178d16bd354649af823124cfc49391fe1ccb422c))
+
 ## [0.2.0](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.1.0...v0.2.0) (2026-07-13)
 
 
