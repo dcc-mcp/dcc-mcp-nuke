@@ -2,7 +2,13 @@ from pathlib import Path
 
 import pytest
 
-from dcc_mcp_nuke.compositing import _nuke_path, validate_manifest
+from dcc_mcp_nuke.compositing import (
+    _connect_merge,
+    _nuke_path,
+    _save_script,
+    _set_read_frame_range,
+    validate_manifest,
+)
 from dcc_mcp_nuke.plugin import is_gui_host
 
 
@@ -49,3 +55,60 @@ def test_only_gui_nuke_processes_start_mcp():
 
 def test_nuke_paths_never_contain_windows_escape_sequences():
     assert _nuke_path(r"C:\artifacts\beauty.%04d.exr") == "C:/artifacts/beauty.%04d.exr"
+
+
+def test_read_nodes_use_manifest_frame_range():
+    class Knob:
+        def __init__(self):
+            self.value = None
+
+        def setValue(self, value):
+            self.value = value
+
+    class Read:
+        def __init__(self):
+            self._knobs = {name: Knob() for name in ("first", "last", "origfirst", "origlast")}
+
+        def knobs(self):
+            return self._knobs
+
+        def __getitem__(self, name):
+            return self._knobs[name]
+
+    read = Read()
+    _set_read_frame_range(read, 1001, 1100)
+
+    assert {name: knob.value for name, knob in read.knobs().items()} == {
+        "first": 1001,
+        "last": 1100,
+        "origfirst": 1001,
+        "origlast": 1100,
+    }
+
+
+def test_merge_connects_existing_comp_as_background_and_new_layer_as_foreground():
+    class Merge:
+        def __init__(self):
+            self.inputs = {}
+
+        def setInput(self, index, node):
+            self.inputs[index] = node
+
+    merge = Merge()
+    _connect_merge(merge, background="beauty", foreground="information")
+
+    assert merge.inputs == {0: "beauty", 1: "information"}
+
+
+def test_script_save_is_non_interactive_and_idempotent():
+    class Nuke:
+        def __init__(self):
+            self.saved = None
+
+        def scriptSaveAs(self, path, overwrite):
+            self.saved = (path, overwrite)
+
+    nuke = Nuke()
+    _save_script(nuke, r"C:\renders\final.nk")
+
+    assert nuke.saved == ("C:/renders/final.nk", 1)

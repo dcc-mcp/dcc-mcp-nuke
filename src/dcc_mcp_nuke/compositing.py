@@ -81,6 +81,7 @@ def build_layered_comp(nuke: Any, manifest: Mapping[str, Any]) -> dict[str, Any]
     current = None
     for index, layer in enumerate(spec["layers"]):
         read = nuke.nodes.Read(file=_nuke_path(layer["path"]))
+        _set_read_frame_range(read, spec["first_frame"], spec["last_frame"])
         read.setName(_node_name(layer["name"], f"Layer_{index + 1}"))
         if layer["colorspace"] and "colorspace" in read.knobs():
             read["colorspace"].setValue(str(layer["colorspace"]))
@@ -91,8 +92,7 @@ def build_layered_comp(nuke: Any, manifest: Mapping[str, Any]) -> dict[str, Any]
         merge = nuke.nodes.Merge2()
         merge.setName(f"Merge_{index + 1:02d}_{layer['operation']}")
         merge["operation"].setValue(layer["operation"])
-        merge.setInput(0, read)
-        merge.setInput(1, current)
+        _connect_merge(merge, background=current, foreground=read)
         current = merge
 
     output = Path(spec["output_path"])
@@ -105,7 +105,7 @@ def build_layered_comp(nuke: Any, manifest: Mapping[str, Any]) -> dict[str, Any]
 
     script = Path(spec["script_path"])
     script.parent.mkdir(parents=True, exist_ok=True)
-    nuke.scriptSaveAs(_nuke_path(script))
+    _save_script(nuke, script)
     return {
         "script_path": str(script),
         "output_path": str(output),
@@ -114,6 +114,25 @@ def build_layered_comp(nuke: Any, manifest: Mapping[str, Any]) -> dict[str, Any]
         "first_frame": spec["first_frame"],
         "last_frame": spec["last_frame"],
     }
+
+
+def _set_read_frame_range(read: Any, first: int, last: int) -> None:
+    """Apply the manifest range to Read knobs created through the Nuke API."""
+    knobs = read.knobs()
+    for name, value in (("first", first), ("last", last), ("origfirst", first), ("origlast", last)):
+        if name in knobs:
+            read[name].setValue(value)
+
+
+def _connect_merge(merge: Any, background: Any, foreground: Any) -> None:
+    """Connect Nuke Merge B (background) and A (foreground) inputs explicitly."""
+    merge.setInput(0, background)
+    merge.setInput(1, foreground)
+
+
+def _save_script(nuke: Any, path: str | Path) -> None:
+    """Save without a GUI overwrite prompt so repeated builds stay idempotent."""
+    nuke.scriptSaveAs(_nuke_path(path), overwrite=1)
 
 
 def _node_name(value: str, fallback: str) -> str:
