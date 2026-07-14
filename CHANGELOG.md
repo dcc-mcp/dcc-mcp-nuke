@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.3.1](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.3.0...v0.3.1) (2026-07-14)
+
+
+### Bug Fixes
+
+* apply frame ranges to layered reads ([#4](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/4)) ([6ea4769](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/6ea47695554f717f19f8018a9dbf3c1888fd6b20))
+
 ## [0.3.0](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.2.0...v0.3.0) (2026-07-14)
 
 
