@@ -4,6 +4,7 @@ import pytest
 
 from dcc_mcp_nuke.compositing import (
     _apply_layer_adjustments,
+    _apply_output_format,
     _connect_merge,
     _nuke_path,
     _save_script,
@@ -113,6 +114,53 @@ def test_layer_adjustments_are_ordered_gain_then_blur():
     assert blur["size"].value == 18.0
     assert result is blur
     assert created == ["Grade_02", "Blur_02"]
+
+
+def test_output_format_is_authoritative():
+    class Knob:
+        def __init__(self):
+            self.value = None
+
+        def setValue(self, value):
+            self.value = value
+
+    class Reformat:
+        def __init__(self):
+            self.node_name = "Reformat"
+            self.input = None
+            self._knobs = {name: Knob() for name in ("type", "format", "resize")}
+
+        def setName(self, name):
+            self.node_name = name
+
+        def setInput(self, index, node):
+            assert index == 0
+            self.input = node
+
+        def knobs(self):
+            return self._knobs
+
+        def __getitem__(self, name):
+            return self._knobs[name]
+
+        def name(self):
+            return self.node_name
+
+    class Nodes:
+        def Reformat(self):
+            return Reformat()
+
+    class Nuke:
+        nodes = Nodes()
+
+    source = object()
+    result, name = _apply_output_format(Nuke(), source, "dcc_mcp_output")
+
+    assert result.input is source
+    assert result["type"].value == "to format"
+    assert result["format"].value == "dcc_mcp_output"
+    assert result["resize"].value == "fit"
+    assert name == "DCC_MCP_OUTPUT_FORMAT"
 
 
 def test_manifest_rejects_relative_output(tmp_path):

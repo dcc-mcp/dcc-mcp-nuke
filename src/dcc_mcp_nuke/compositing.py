@@ -106,6 +106,7 @@ def build_layered_comp(nuke: Any, manifest: Mapping[str, Any]) -> dict[str, Any]
 
     output = Path(spec["output_path"])
     output.parent.mkdir(parents=True, exist_ok=True)
+    current, output_format_node = _apply_output_format(nuke, current, format_name)
     write = nuke.nodes.Write(file=_nuke_path(output))
     write.setName("DCC_MCP_FINAL_WRITE")
     write.setInput(0, current)
@@ -121,9 +122,25 @@ def build_layered_comp(nuke: Any, manifest: Mapping[str, Any]) -> dict[str, Any]
         "write_node": write.name(),
         "read_nodes": reads,
         "adjustment_nodes": adjustments,
+        "output_format_node": output_format_node,
         "first_frame": spec["first_frame"],
         "last_frame": spec["last_frame"],
     }
+
+
+def _apply_output_format(nuke: Any, node: Any, format_name: str) -> tuple[Any, str]:
+    """Make the manifest resolution authoritative instead of inheriting the input format."""
+    reformat = nuke.nodes.Reformat()
+    reformat.setName("DCC_MCP_OUTPUT_FORMAT")
+    reformat.setInput(0, node)
+    knobs = reformat.knobs()
+    if "type" in knobs:
+        reformat["type"].setValue("to format")
+    if "format" in knobs:
+        reformat["format"].setValue(format_name)
+    if "resize" in knobs:
+        reformat["resize"].setValue("fit")
+    return reformat, reformat.name()
 
 
 def _apply_layer_adjustments(nuke: Any, node: Any, layer: Mapping[str, Any], index: int) -> tuple[Any, list[str]]:
