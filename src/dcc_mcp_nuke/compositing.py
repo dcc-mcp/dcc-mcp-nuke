@@ -38,8 +38,14 @@ def validate_manifest(manifest: Mapping[str, Any]) -> dict[str, Any]:
                 "path": path,
                 "operation": operation,
                 "colorspace": layer.get("colorspace"),
+                "gain": float(layer.get("gain", 1.0)),
+                "blur_size": float(layer.get("blur_size", 0.0)),
             }
         )
+        if normalized_layers[-1]["gain"] < 0:
+            raise ValueError(f"layers[{index}].gain must be non-negative")
+        if normalized_layers[-1]["blur_size"] < 0:
+            raise ValueError(f"layers[{index}].blur_size must be non-negative")
 
     first = int(normalized.get("first_frame", 1))
     last = int(normalized.get("last_frame", first))
@@ -78,6 +84,7 @@ def build_layered_comp(nuke: Any, manifest: Mapping[str, Any]) -> dict[str, Any]
     root["format"].setValue(format_name)
 
     reads = []
+    adjustments = []
     current = None
     for index, layer in enumerate(spec["layers"]):
         read = nuke.nodes.Read(file=_nuke_path(layer["path"]))
@@ -86,13 +93,15 @@ def build_layered_comp(nuke: Any, manifest: Mapping[str, Any]) -> dict[str, Any]
         if layer["colorspace"] and "colorspace" in read.knobs():
             read["colorspace"].setValue(str(layer["colorspace"]))
         reads.append(read.name())
+        adjusted, created = _apply_layer_adjustments(nuke, read, layer, index)
+        adjustments.extend(created)
         if current is None:
-            current = read
+            current = adjusted
             continue
         merge = nuke.nodes.Merge2()
         merge.setName(f"Merge_{index + 1:02d}_{layer['operation']}")
         merge["operation"].setValue(layer["operation"])
-        _connect_merge(merge, background=current, foreground=read)
+        _connect_merge(merge, background=current, foreground=adjusted)
         current = merge
 
     output = Path(spec["output_path"])
@@ -111,9 +120,31 @@ def build_layered_comp(nuke: Any, manifest: Mapping[str, Any]) -> dict[str, Any]
         "output_path": str(output),
         "write_node": write.name(),
         "read_nodes": reads,
+        "adjustment_nodes": adjustments,
         "first_frame": spec["first_frame"],
         "last_frame": spec["last_frame"],
     }
+
+
+def _apply_layer_adjustments(nuke: Any, node: Any, layer: Mapping[str, Any], index: int) -> tuple[Any, list[str]]:
+    """Apply bounded, deterministic per-layer gain and blur operations."""
+    current = node
+    created = []
+    if layer["gain"] != 1.0:
+        grade = nuke.nodes.Grade()
+        grade.setName(f"Grade_{index + 1:02d}")
+        grade.setInput(0, current)
+        grade["multiply"].setValue(layer["gain"])
+        current = grade
+        created.append(grade.name())
+    if layer["blur_size"] > 0.0:
+        blur = nuke.nodes.Blur()
+        blur.setName(f"Blur_{index + 1:02d}")
+        blur.setInput(0, current)
+        blur["size"].setValue(layer["blur_size"])
+        current = blur
+        created.append(blur.name())
+    return current, created
 
 
 def _set_read_frame_range(read: Any, first: int, last: int) -> None:

@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from dcc_mcp_nuke.compositing import (
+    _apply_layer_adjustments,
     _connect_merge,
     _nuke_path,
     _save_script,
@@ -30,8 +31,88 @@ def test_manifest_normalizes_layer_operations(tmp_path):
 
     assert result["layers"][0]["operation"] == "over"
     assert result["layers"][1]["operation"] == "plus"
+    assert result["layers"][0]["gain"] == 1.0
+    assert result["layers"][0]["blur_size"] == 0.0
     assert result["width"] == 1920
     assert result["height"] == 1080
+
+
+def test_manifest_normalizes_layer_adjustments(tmp_path):
+    value = manifest(tmp_path)
+    value["layers"][1].update(gain=2.5, blur_size=24)
+
+    result = validate_manifest(value)
+
+    assert result["layers"][1]["gain"] == 2.5
+    assert result["layers"][1]["blur_size"] == 24.0
+
+
+@pytest.mark.parametrize("field", ["gain", "blur_size"])
+def test_manifest_rejects_negative_layer_adjustments(tmp_path, field):
+    value = manifest(tmp_path)
+    value["layers"][0][field] = -1
+
+    with pytest.raises(ValueError, match=f"{field} must be non-negative"):
+        validate_manifest(value)
+
+
+def test_layer_adjustments_are_ordered_gain_then_blur():
+    class Knob:
+        def __init__(self):
+            self.value = None
+
+        def setValue(self, value):
+            self.value = value
+
+    class Node:
+        def __init__(self, kind):
+            self.kind = kind
+            self.input = None
+            self.node_name = kind
+            self._knobs = {"multiply": Knob(), "size": Knob()}
+
+        def setName(self, name):
+            self.node_name = name
+
+        def setInput(self, index, node):
+            assert index == 0
+            self.input = node
+
+        def __getitem__(self, name):
+            return self._knobs[name]
+
+        def name(self):
+            return self.node_name
+
+    class Nodes:
+        def __init__(self):
+            self.created = []
+
+        def Grade(self):
+            node = Node("Grade")
+            self.created.append(node)
+            return node
+
+        def Blur(self):
+            node = Node("Blur")
+            self.created.append(node)
+            return node
+
+    class Nuke:
+        def __init__(self):
+            self.nodes = Nodes()
+
+    nuke = Nuke()
+    source = Node("Read")
+    result, created = _apply_layer_adjustments(nuke, source, {"gain": 3.0, "blur_size": 18.0}, 1)
+
+    grade, blur = nuke.nodes.created
+    assert grade.input is source
+    assert grade["multiply"].value == 3.0
+    assert blur.input is grade
+    assert blur["size"].value == 18.0
+    assert result is blur
+    assert created == ["Grade_02", "Blur_02"]
 
 
 def test_manifest_rejects_relative_output(tmp_path):

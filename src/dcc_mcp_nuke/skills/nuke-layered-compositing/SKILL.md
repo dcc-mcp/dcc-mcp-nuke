@@ -18,4 +18,5 @@ metadata:
 # Nuke Layered Compositing
 
 Use `build_layered_comp` with layers ordered bottom-to-top, then render the
-returned Write node with `render_write_node`.
+returned Write node with `render_write_node`. Use per-layer `gain` and
+`blur_size` for bounded light-wrap or glow passes before merging.
