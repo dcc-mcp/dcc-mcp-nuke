@@ -20,4 +20,5 @@ def test_version_metadata_is_synchronized():
 def test_bundled_contract_files_exist():
     package = ROOT / "src" / "dcc_mcp_nuke"
     assert package.joinpath("nuke_plugin", "init.py").exists()
+    assert package.joinpath("nuke_plugin", "menu.py").exists()
     assert package.joinpath("skills", "nuke-script", "tools.yaml").exists()
