@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.6.0](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.5.0...v0.6.0) (2026-07-16)
+
+
+### Features
+
+* inspect Nuke Read channels ([#14](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/14)) ([3db26da](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/3db26da442ebe5852d1eb28faa80b6acf51ce0f3))
+
 ## [0.5.0](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.4.1...v0.5.0) (2026-07-16)
 
 
