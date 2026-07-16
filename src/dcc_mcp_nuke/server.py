@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Optional
 
@@ -10,13 +9,13 @@ from dcc_mcp_core.server_base import DccServerBase
 from dcc_mcp_nuke.__version__ import __version__
 from dcc_mcp_nuke.dispatcher import NukeDispatcher
 
-DEFAULT_PORT = 8765
+DEFAULT_PORT = 0
 SERVER_NAME = "dcc-mcp-nuke"
 _server: Optional["NukeMcpServer"] = None
 
 
 class NukeMcpServer(DccServerBase):
-    def __init__(self, port: int = DEFAULT_PORT) -> None:
+    def __init__(self, port: Optional[int] = None) -> None:
         self._host_dispatcher = NukeDispatcher()
         self._host_dispatcher.start()
         options = DccServerOptions.from_env(
@@ -56,7 +55,7 @@ class NukeMcpServer(DccServerBase):
 def start_server(port: Optional[int] = None) -> NukeMcpServer:
     global _server
     if _server is None or not _server.is_running:
-        _server = NukeMcpServer(port or int(os.environ.get("DCC_MCP_NUKE_PORT", DEFAULT_PORT)))
+        _server = NukeMcpServer(port)
         try:
             _server.register_builtin_actions()
             _server.start()

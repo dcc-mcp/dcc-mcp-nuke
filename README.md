@@ -8,7 +8,10 @@ python -m pip install dcc-mcp-nuke
 ```
 
 Add the installed package's `dcc_mcp_nuke/nuke_plugin` folder to `NUKE_PATH`.
-Nuke loads its `init.py` and serves MCP at `http://127.0.0.1:8765/mcp`.
+Nuke loads its `init.py` and asks the operating system for an available instance
+port. Use `dcc-mcp-cli list` or the stable gateway at
+`http://127.0.0.1:9765/mcp` to discover and connect to the running instance.
+Set `DCC_MCP_NUKE_PORT` only when a fixed direct port is required.
 
 The bundled `nuke-script` skill inspects scripts and nodes and can explicitly
 save the current script. Releases are published through `release.yaml` and the
