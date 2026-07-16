@@ -27,6 +27,8 @@ tools:
                   path: {type: string}
                   operation: {type: string, enum: [over, plus, multiply, screen, max, min], default: over}
                   colorspace: {type: string}
+                  gain: {type: number, minimum: 0, default: 1}
+                  blur_size: {type: number, minimum: 0, default: 0}
     read_only: false
     destructive: true
     idempotent: true
@@ -43,6 +45,7 @@ tools:
         write_node: {type: string}
         first_frame: {type: integer, minimum: 0}
         last_frame: {type: integer, minimum: 0}
+        step: {type: integer, minimum: 1, default: 1}
     read_only: false
     destructive: true
     idempotent: true
