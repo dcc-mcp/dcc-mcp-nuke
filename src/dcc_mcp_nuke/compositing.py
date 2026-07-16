@@ -6,6 +6,9 @@ from typing import Any, Mapping
 
 MERGE_OPERATIONS = {"over", "plus", "multiply", "screen", "max", "min"}
 ADJUSTMENT_KINDS = {"grade", "material_gain", "blur"}
+NODE_COLUMN_SPACING = 320
+NODE_ROW_SPACING = 100
+MATTE_BRANCH_OFFSET = 140
 
 
 def validate_manifest(manifest: Mapping[str, Any]) -> dict[str, Any]:
@@ -164,10 +167,14 @@ def build_layered_comp(nuke: Any, manifest: Mapping[str, Any]) -> dict[str, Any]
     channel_nodes = []
     adjustments = []
     current = None
+    current_y = 0
+    merge_start_y = (max(_layer_row_count(layer) for layer in spec["layers"]) + 1) * NODE_ROW_SPACING
     for index, layer in enumerate(spec["layers"]):
+        layer_x = index * NODE_COLUMN_SPACING
         read = nuke.nodes.Read(file=_nuke_path(layer["path"]))
         _set_read_frame_range(read, spec["first_frame"], spec["last_frame"])
         read.setName(_node_name(layer["name"], f"Layer_{index + 1}"))
+        _set_node_position(read, layer_x, 0)
         if layer["colorspace"] and "colorspace" in read.knobs():
             read["colorspace"].setValue(str(layer["colorspace"]))
         reads.append(read.name())
@@ -181,26 +188,43 @@ def build_layered_comp(nuke: Any, manifest: Mapping[str, Any]) -> dict[str, Any]
             _require_layers(read, list(dict.fromkeys(requirements)))
 
         source = read
+        adjustment_y = NODE_ROW_SPACING
         if layer["channel"]:
             source = _shuffle_layer(nuke, read, layer["channel"], index)
+            _set_node_position(source, layer_x, adjustment_y)
+            adjustment_y += NODE_ROW_SPACING
             channel_nodes.append(source.name())
-        adjusted, created = _apply_layer_adjustments(nuke, source, layer, index, matte_source=read)
+        adjusted, created = _apply_layer_adjustments(
+            nuke,
+            source,
+            layer,
+            index,
+            matte_source=read,
+            layout_origin=(layer_x, adjustment_y),
+        )
         adjustments.extend(created)
         if current is None:
             current = adjusted
+            current_y = _layer_row_count(layer) * NODE_ROW_SPACING
             continue
         merge = nuke.nodes.Merge2()
         merge.setName(f"Merge_{index + 1:02d}_{layer['operation']}")
         merge["operation"].setValue(layer["operation"])
         _connect_merge(merge, background=current, foreground=adjusted)
+        current_y = merge_start_y + (index - 1) * NODE_ROW_SPACING
+        _set_node_position(merge, layer_x, current_y)
         current = merge
 
     output = Path(spec["output_path"])
     output.parent.mkdir(parents=True, exist_ok=True)
     current, output_format_node = _apply_output_format(nuke, current, format_name)
+    output_x = (len(spec["layers"]) - 1) * NODE_COLUMN_SPACING
+    current_y += NODE_ROW_SPACING
+    _set_node_position(current, output_x, current_y)
     write = nuke.nodes.Write(file=_nuke_path(output))
     write.setName("DCC_MCP_FINAL_WRITE")
     write.setInput(0, current)
+    _set_node_position(write, output_x, current_y + NODE_ROW_SPACING)
     if "file_type" in write.knobs():
         write["file_type"].setValue(_file_type(output))
     _set_write_options(write, spec)
@@ -252,10 +276,12 @@ def _apply_layer_adjustments(
     index: int,
     *,
     matte_source: Any | None = None,
+    layout_origin: tuple[int, int] | None = None,
 ) -> tuple[Any, list[str]]:
     """Apply legacy gain/blur or an ordered, bounded adjustment pipeline."""
     current = node
     created = []
+    layout_x, layout_y = layout_origin or (0, 0)
     if layer.get("adjustments"):
         for operation_index, operation in enumerate(layer["adjustments"]):
             fallback = f"{operation['kind']}_{index + 1:02d}_{operation_index + 1:02d}"
@@ -266,6 +292,9 @@ def _apply_layer_adjustments(
                 grade.setInput(0, current)
                 grade["multiply"].setValue(operation["gain"])
                 grade["gamma"].setValue(operation["gamma"])
+                if layout_origin is not None:
+                    _set_node_position(grade, layout_x, layout_y)
+                    layout_y += NODE_ROW_SPACING
                 current = grade
                 created.append(grade.name())
             elif operation["kind"] == "blur":
@@ -273,6 +302,9 @@ def _apply_layer_adjustments(
                 blur.setName(name)
                 blur.setInput(0, current)
                 blur["size"].setValue(operation["size"])
+                if layout_origin is not None:
+                    _set_node_position(blur, layout_x, layout_y)
+                    layout_y += NODE_ROW_SPACING
                 current = blur
                 created.append(blur.name())
             else:
@@ -296,6 +328,11 @@ def _apply_layer_adjustments(
                     keymix["channels"].setValue("rgba")
                 if "maskChannel" in keymix.knobs():
                     keymix["maskChannel"].setValue("rgba.alpha")
+                if layout_origin is not None:
+                    _set_node_position(attenuated, layout_x, layout_y)
+                    _set_node_position(matte, layout_x + MATTE_BRANCH_OFFSET, layout_y)
+                    _set_node_position(keymix, layout_x, layout_y + NODE_ROW_SPACING)
+                    layout_y += 2 * NODE_ROW_SPACING
                 current = keymix
                 created.extend((matte.name(), attenuated.name(), keymix.name()))
         return current, created
@@ -305,6 +342,9 @@ def _apply_layer_adjustments(
         grade.setName(f"Grade_{index + 1:02d}")
         grade.setInput(0, current)
         grade["multiply"].setValue(layer["gain"])
+        if layout_origin is not None:
+            _set_node_position(grade, layout_x, layout_y)
+            layout_y += NODE_ROW_SPACING
         current = grade
         created.append(grade.name())
     if layer["blur_size"] > 0.0:
@@ -312,6 +352,8 @@ def _apply_layer_adjustments(
         blur.setName(f"Blur_{index + 1:02d}")
         blur.setInput(0, current)
         blur["size"].setValue(layer["blur_size"])
+        if layout_origin is not None:
+            _set_node_position(blur, layout_x, layout_y)
         current = blur
         created.append(blur.name())
     return current, created
@@ -348,6 +390,26 @@ def _connect_merge(merge: Any, background: Any, foreground: Any) -> None:
     """Connect Nuke Merge B (background) and A (foreground) inputs explicitly."""
     merge.setInput(0, background)
     merge.setInput(1, foreground)
+
+
+def _layer_row_count(layer: Mapping[str, Any]) -> int:
+    rows = 1 if layer["channel"] else 0
+    if layer["adjustments"]:
+        return rows + sum(2 if operation["kind"] == "material_gain" else 1 for operation in layer["adjustments"])
+    return rows + int(layer["gain"] != 1.0) + int(layer["blur_size"] > 0.0)
+
+
+def _set_node_position(node: Any, x: int, y: int) -> None:
+    set_xy = getattr(node, "setXYpos", None)
+    if callable(set_xy):
+        set_xy(x, y)
+        return
+    set_x = getattr(node, "setXpos", None)
+    set_y = getattr(node, "setYpos", None)
+    if callable(set_x):
+        set_x(x)
+    if callable(set_y):
+        set_y(y)
 
 
 def _save_script(nuke: Any, path: str | Path) -> None:

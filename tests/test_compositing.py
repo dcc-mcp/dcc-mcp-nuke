@@ -359,3 +359,82 @@ def test_script_save_is_non_interactive_and_idempotent():
     _save_script(nuke, r"C:\renders\final.nk")
 
     assert nuke.saved == ("C:/renders/final.nk", 1)
+
+
+def test_build_layered_comp_positions_branches_and_output_deterministically(tmp_path):
+    def node(name, *knob_names):
+        value = MagicMock()
+        state = {"name": name}
+        knobs = {knob_name: MagicMock() for knob_name in knob_names}
+        value.setName.side_effect = lambda new_name: state.update(name=new_name)
+        value.name.side_effect = lambda: state["name"]
+        value.knobs.return_value = knobs
+        value.__getitem__.side_effect = knobs.__getitem__
+        value.channels.return_value = ["emission.red", "CryptoMaterials.red"]
+        return value
+
+    beauty = node("Read1", "first", "last", "origfirst", "origlast")
+    emission = node("Read2", "first", "last", "origfirst", "origlast")
+    shuffle = node("Shuffle", "in")
+    matte = node("Cryptomatte", "cryptoLayer", "matteList")
+    attenuation = node("Grade", "multiply")
+    keymix = node("Keymix", "channels", "maskChannel")
+    blur = node("Blur", "size")
+    merge = node("Merge", "operation")
+    reformat = node("Reformat", "type", "format", "resize")
+    write = node("Write", "file_type")
+    root = node("Root", "first_frame", "last_frame", "fps", "format")
+    nuke = MagicMock()
+    nuke.allNodes.return_value = []
+    nuke.root.return_value = root
+    nuke.nodes.Read.side_effect = [beauty, emission]
+    nuke.nodes.Shuffle.return_value = shuffle
+    nuke.nodes.Cryptomatte.return_value = matte
+    nuke.nodes.Grade.return_value = attenuation
+    nuke.nodes.Keymix.return_value = keymix
+    nuke.nodes.Blur.return_value = blur
+    nuke.nodes.Merge2.return_value = merge
+    nuke.nodes.Reformat.return_value = reformat
+    nuke.nodes.Write.return_value = write
+    value = manifest(tmp_path)
+    value["layers"][1].update(
+        channel="emission",
+        adjustments=[
+            {
+                "kind": "material_gain",
+                "crypto_layer": "CryptoMaterials",
+                "materials": ["/mat/Sun"],
+                "gain": 0.5,
+            },
+            {"kind": "blur", "size": 24},
+        ],
+    )
+
+    compositing.build_layered_comp(nuke, value)
+
+    assert beauty.setXYpos.call_args.args == (0, 0)
+    assert emission.setXYpos.call_args.args == (320, 0)
+    assert shuffle.setXYpos.call_args.args == (320, 100)
+    assert attenuation.setXYpos.call_args.args == (320, 200)
+    assert matte.setXYpos.call_args.args == (460, 200)
+    assert keymix.setXYpos.call_args.args == (320, 300)
+    assert blur.setXYpos.call_args.args == (320, 400)
+    assert merge.setXYpos.call_args.args == (320, 500)
+    assert reformat.setXYpos.call_args.args == (320, 600)
+    assert write.setXYpos.call_args.args == (320, 700)
+
+
+def test_node_positioning_falls_back_to_available_native_axis_setters():
+    class Node:
+        def setXpos(self, value):
+            self.x = value
+
+        def setYpos(self, value):
+            self.y = value
+
+    node = Node()
+
+    compositing._set_node_position(node, 320, 100)
+    compositing._set_node_position(object(), 0, 0)
+
+    assert (node.x, node.y) == (320, 100)
