@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.4.0](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.3.1...v0.4.0) (2026-07-16)
+
+
+### Features
+
+* add bounded layer adjustments to Nuke composites ([#6](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/6)) ([c1bae24](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/c1bae2489bb9cb964f9a437d05c5743354a00b96))
+* install Nuke lifecycle menu automatically ([#7](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/7)) ([82b9f55](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/82b9f5534b0e7cc422d3171ff9b6246c46a63829))
+
 ## [0.3.1](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.3.0...v0.3.1) (2026-07-14)
 
 
