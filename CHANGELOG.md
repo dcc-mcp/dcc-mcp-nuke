@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.5.0](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.4.1...v0.5.0) (2026-07-16)
+
+
+### Features
+
+* support multilayer EXR composites ([#11](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/11)) ([af82041](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/af82041e85e86072c957ad7dafcf427834ab6ee8))
+
+
+### Bug Fixes
+
+* return render validation errors safely ([#13](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/13)) ([8a770d6](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/8a770d632d1a610003f81456e497b92ea91d00d2))
+
 ## [0.4.1](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.4.0...v0.4.1) (2026-07-16)
 
 
