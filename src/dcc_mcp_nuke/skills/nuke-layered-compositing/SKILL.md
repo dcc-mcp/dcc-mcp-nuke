@@ -18,5 +18,6 @@ metadata:
 # Nuke Layered Compositing
 
 Use `build_layered_comp` with layers ordered bottom-to-top, then render the
-returned Write node with `render_write_node`. Use per-layer `gain` and
-`blur_size` for bounded light-wrap or glow passes before merging.
+returned Write node with `render_write_node`. For a multilayer EXR, reuse its
+path with a `channel` per pass and ordered `grade`, `material_gain`, or `blur`
+adjustments. Declare `required_layers` when missing AOVs must fail before save.

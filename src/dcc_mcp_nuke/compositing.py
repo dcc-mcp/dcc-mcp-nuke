@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 MERGE_OPERATIONS = {"over", "plus", "multiply", "screen", "max", "min"}
+ADJUSTMENT_KINDS = {"grade", "material_gain", "blur"}
 
 
 def validate_manifest(manifest: Mapping[str, Any]) -> dict[str, Any]:
@@ -32,20 +33,35 @@ def validate_manifest(manifest: Mapping[str, Any]) -> dict[str, Any]:
         operation = str(layer.get("operation", "over")).lower()
         if operation not in MERGE_OPERATIONS:
             raise ValueError(f"layers[{index}].operation must be one of {sorted(MERGE_OPERATIONS)}")
+        channel = layer.get("channel")
+        if channel is not None and (not isinstance(channel, str) or not channel.strip()):
+            raise ValueError(f"layers[{index}].channel must be a non-empty string")
         normalized_layers.append(
             {
                 "name": str(layer.get("name") or f"layer_{index + 1}"),
                 "path": path,
                 "operation": operation,
+                "channel": channel,
                 "colorspace": layer.get("colorspace"),
                 "gain": float(layer.get("gain", 1.0)),
                 "blur_size": float(layer.get("blur_size", 0.0)),
+                "adjustments": _normalize_adjustments(layer, index),
             }
         )
         if normalized_layers[-1]["gain"] < 0:
             raise ValueError(f"layers[{index}].gain must be non-negative")
         if normalized_layers[-1]["blur_size"] < 0:
             raise ValueError(f"layers[{index}].blur_size must be non-negative")
+
+    required_layers = normalized.get("required_layers", [])
+    if not isinstance(required_layers, list) or any(
+        not isinstance(layer, str) or not layer.strip() for layer in required_layers
+    ):
+        raise ValueError("required_layers must be an array of non-empty strings")
+    for key in ("output_colorspace", "output_datatype"):
+        value = normalized.get(key)
+        if value is not None and (not isinstance(value, str) or not value.strip()):
+            raise ValueError(f"{key} must be a non-empty string")
 
     first = int(normalized.get("first_frame", 1))
     last = int(normalized.get("last_frame", first))
@@ -58,14 +74,75 @@ def validate_manifest(manifest: Mapping[str, Any]) -> dict[str, Any]:
 
     normalized.update(
         layers=normalized_layers,
+        required_layers=list(dict.fromkeys(required_layers)),
         first_frame=first,
         last_frame=last,
         width=int(normalized.get("width", 1920)),
         height=int(normalized.get("height", 1080)),
         fps=float(normalized.get("fps", 30.0)),
+        output_colorspace=normalized.get("output_colorspace"),
+        output_datatype=normalized.get("output_datatype"),
     )
     if normalized["width"] <= 0 or normalized["height"] <= 0 or normalized["fps"] <= 0:
         raise ValueError("width, height, and fps must be positive")
+    return normalized
+
+
+def _normalize_adjustments(layer: Mapping[str, Any], layer_index: int) -> list[dict[str, Any]]:
+    adjustments = layer.get("adjustments")
+    if adjustments is None:
+        return []
+    if float(layer.get("gain", 1.0)) != 1.0 or float(layer.get("blur_size", 0.0)) != 0.0:
+        raise ValueError(f"layers[{layer_index}] cannot mix adjustments with non-default gain or blur_size")
+    if not isinstance(adjustments, list):
+        raise ValueError(f"layers[{layer_index}].adjustments must be an array")
+
+    normalized = []
+    for index, adjustment in enumerate(adjustments):
+        label = f"layers[{layer_index}].adjustments[{index}]"
+        if not isinstance(adjustment, Mapping):
+            raise ValueError(f"{label} must be an object")
+        kind = str(adjustment.get("kind", "")).lower()
+        if kind not in ADJUSTMENT_KINDS:
+            raise ValueError(f"{label}.kind must be one of {sorted(ADJUSTMENT_KINDS)}")
+        name = adjustment.get("name")
+        if name is not None and (not isinstance(name, str) or not name.strip()):
+            raise ValueError(f"{label}.name must be a non-empty string")
+
+        if kind == "grade":
+            gain = float(adjustment.get("gain", 1.0))
+            gamma = float(adjustment.get("gamma", 1.0))
+            if gain < 0 or gamma <= 0:
+                raise ValueError(f"{label} requires gain >= 0 and gamma > 0")
+            normalized.append({"kind": kind, "name": name, "gain": gain, "gamma": gamma})
+        elif kind == "blur":
+            size = float(adjustment.get("size", 0.0))
+            if size < 0:
+                raise ValueError(f"{label}.size must be non-negative")
+            normalized.append({"kind": kind, "name": name, "size": size})
+        else:
+            crypto_layer = adjustment.get("crypto_layer")
+            materials = adjustment.get("materials")
+            gain = float(adjustment.get("gain", 1.0))
+            if not isinstance(crypto_layer, str) or not crypto_layer.strip():
+                raise ValueError(f"{label}.crypto_layer must be a non-empty string")
+            if (
+                not isinstance(materials, list)
+                or not materials
+                or any(not isinstance(material, str) or not material.strip() for material in materials)
+            ):
+                raise ValueError(f"{label}.materials must contain non-empty strings")
+            if gain < 0:
+                raise ValueError(f"{label}.gain must be non-negative")
+            normalized.append(
+                {
+                    "kind": kind,
+                    "name": name,
+                    "crypto_layer": crypto_layer,
+                    "materials": materials,
+                    "gain": gain,
+                }
+            )
     return normalized
 
 
@@ -84,6 +161,7 @@ def build_layered_comp(nuke: Any, manifest: Mapping[str, Any]) -> dict[str, Any]
     root["format"].setValue(format_name)
 
     reads = []
+    channel_nodes = []
     adjustments = []
     current = None
     for index, layer in enumerate(spec["layers"]):
@@ -93,7 +171,20 @@ def build_layered_comp(nuke: Any, manifest: Mapping[str, Any]) -> dict[str, Any]
         if layer["colorspace"] and "colorspace" in read.knobs():
             read["colorspace"].setValue(str(layer["colorspace"]))
         reads.append(read.name())
-        adjusted, created = _apply_layer_adjustments(nuke, read, layer, index)
+        requirements = [*spec["required_layers"]]
+        if layer["channel"]:
+            requirements.append(layer["channel"])
+        requirements.extend(
+            adjustment["crypto_layer"] for adjustment in layer["adjustments"] if adjustment["kind"] == "material_gain"
+        )
+        if requirements:
+            _require_layers(read, list(dict.fromkeys(requirements)))
+
+        source = read
+        if layer["channel"]:
+            source = _shuffle_layer(nuke, read, layer["channel"], index)
+            channel_nodes.append(source.name())
+        adjusted, created = _apply_layer_adjustments(nuke, source, layer, index, matte_source=read)
         adjustments.extend(created)
         if current is None:
             current = adjusted
@@ -112,6 +203,7 @@ def build_layered_comp(nuke: Any, manifest: Mapping[str, Any]) -> dict[str, Any]
     write.setInput(0, current)
     if "file_type" in write.knobs():
         write["file_type"].setValue(_file_type(output))
+    _set_write_options(write, spec)
 
     script = Path(spec["script_path"])
     script.parent.mkdir(parents=True, exist_ok=True)
@@ -121,6 +213,7 @@ def build_layered_comp(nuke: Any, manifest: Mapping[str, Any]) -> dict[str, Any]
         "output_path": str(output),
         "write_node": write.name(),
         "read_nodes": reads,
+        "channel_nodes": channel_nodes,
         "adjustment_nodes": adjustments,
         "output_format_node": output_format_node,
         "first_frame": spec["first_frame"],
@@ -143,10 +236,70 @@ def _apply_output_format(nuke: Any, node: Any, format_name: str) -> tuple[Any, s
     return reformat, reformat.name()
 
 
-def _apply_layer_adjustments(nuke: Any, node: Any, layer: Mapping[str, Any], index: int) -> tuple[Any, list[str]]:
-    """Apply bounded, deterministic per-layer gain and blur operations."""
+def _shuffle_layer(nuke: Any, read: Any, channel: str, index: int) -> Any:
+    shuffle = nuke.nodes.Shuffle()
+    shuffle.setName(f"Shuffle_{index + 1:02d}_{_node_name(channel, 'layer')}")
+    shuffle.setInput(0, read)
+    input_knob = "in" if "in" in shuffle.knobs() else "in1"
+    shuffle[input_knob].setValue(channel)
+    return shuffle
+
+
+def _apply_layer_adjustments(
+    nuke: Any,
+    node: Any,
+    layer: Mapping[str, Any],
+    index: int,
+    *,
+    matte_source: Any | None = None,
+) -> tuple[Any, list[str]]:
+    """Apply legacy gain/blur or an ordered, bounded adjustment pipeline."""
     current = node
     created = []
+    if layer.get("adjustments"):
+        for operation_index, operation in enumerate(layer["adjustments"]):
+            fallback = f"{operation['kind']}_{index + 1:02d}_{operation_index + 1:02d}"
+            name = _node_name(operation.get("name") or fallback, fallback)
+            if operation["kind"] == "grade":
+                grade = nuke.nodes.Grade()
+                grade.setName(name)
+                grade.setInput(0, current)
+                grade["multiply"].setValue(operation["gain"])
+                grade["gamma"].setValue(operation["gamma"])
+                current = grade
+                created.append(grade.name())
+            elif operation["kind"] == "blur":
+                blur = nuke.nodes.Blur()
+                blur.setName(name)
+                blur.setInput(0, current)
+                blur["size"].setValue(operation["size"])
+                current = blur
+                created.append(blur.name())
+            else:
+                matte = nuke.nodes.Cryptomatte()
+                matte.setName(f"{name}_Crypto")
+                matte.setInput(0, matte_source if matte_source is not None else node)
+                matte["cryptoLayer"].setValue(operation["crypto_layer"])
+                matte["matteList"].setValue(", ".join(operation["materials"]))
+
+                attenuated = nuke.nodes.Grade()
+                attenuated.setName(f"{name}_Attenuated")
+                attenuated.setInput(0, current)
+                attenuated["multiply"].setValue(operation["gain"])
+
+                keymix = nuke.nodes.Keymix()
+                keymix.setName(f"{name}_Material_Keymix")
+                keymix.setInput(0, current)
+                keymix.setInput(1, attenuated)
+                keymix.setInput(2, matte)
+                if "channels" in keymix.knobs():
+                    keymix["channels"].setValue("rgba")
+                if "maskChannel" in keymix.knobs():
+                    keymix["maskChannel"].setValue("rgba.alpha")
+                current = keymix
+                created.extend((matte.name(), attenuated.name(), keymix.name()))
+        return current, created
+
     if layer["gain"] != 1.0:
         grade = nuke.nodes.Grade()
         grade.setName(f"Grade_{index + 1:02d}")
@@ -162,6 +315,25 @@ def _apply_layer_adjustments(nuke: Any, node: Any, layer: Mapping[str, Any], ind
         current = blur
         created.append(blur.name())
     return current, created
+
+
+def _require_layers(read: Any, required_layers: list[str]) -> None:
+    channels = read.channels()
+    missing = [
+        layer
+        for layer in required_layers
+        if not any(channel == layer or channel.startswith(f"{layer}.") for channel in channels)
+    ]
+    if missing:
+        raise RuntimeError(f"Nuke EXR is missing required layers: {', '.join(missing)}")
+
+
+def _set_write_options(write: Any, spec: Mapping[str, Any]) -> None:
+    knobs = write.knobs()
+    for manifest_key, knob_name in (("output_colorspace", "colorspace"), ("output_datatype", "datatype")):
+        value = spec.get(manifest_key)
+        if value and knob_name in knobs:
+            write[knob_name].setValue(value)
 
 
 def _set_read_frame_range(read: Any, first: int, last: int) -> None:
