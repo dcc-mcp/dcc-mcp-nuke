@@ -1,7 +1,9 @@
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
+import dcc_mcp_nuke.compositing as compositing
 from dcc_mcp_nuke.compositing import (
     _apply_layer_adjustments,
     _apply_output_format,
@@ -46,6 +48,122 @@ def test_manifest_normalizes_layer_adjustments(tmp_path):
 
     assert result["layers"][1]["gain"] == 2.5
     assert result["layers"][1]["blur_size"] == 24.0
+
+
+def test_manifest_normalizes_multilayer_exr_pipeline(tmp_path):
+    value = manifest(tmp_path)
+    value.update(
+        required_layers=["rgba", "combinedemission", "CryptoMaterials"],
+        output_colorspace="sRGB",
+        output_datatype="16 bit",
+    )
+    value["layers"][0].update(
+        channel="rgba",
+        adjustments=[
+            {"kind": "grade", "gain": 1.08, "gamma": 1.05},
+            {
+                "kind": "material_gain",
+                "name": "Restrained_Orbital_Guides",
+                "crypto_layer": "CryptoMaterials",
+                "materials": ["/mat/Celestial_HUD_Emission"],
+                "gain": 0.06,
+            },
+            {"kind": "blur", "size": 24},
+        ],
+    )
+
+    result = validate_manifest(value)
+
+    assert result["required_layers"] == ["rgba", "combinedemission", "CryptoMaterials"]
+    assert result["output_colorspace"] == "sRGB"
+    assert result["output_datatype"] == "16 bit"
+    assert result["layers"][0]["channel"] == "rgba"
+    assert [operation["kind"] for operation in result["layers"][0]["adjustments"]] == [
+        "grade",
+        "material_gain",
+        "blur",
+    ]
+    assert result["layers"][0]["adjustments"][1]["materials"] == ["/mat/Celestial_HUD_Emission"]
+
+
+def test_multilayer_adjustments_preserve_declared_order():
+    def node(name, *knob_names):
+        value = MagicMock()
+        value.name.return_value = name
+        knobs = {knob_name: MagicMock() for knob_name in knob_names}
+        value.knobs.return_value = knobs
+        value.__getitem__.side_effect = knobs.__getitem__
+        return value, knobs
+
+    grade, grade_knobs = node("Grade", "multiply", "gamma")
+    matte, matte_knobs = node("Matte", "cryptoLayer", "matteList")
+    attenuation, attenuation_knobs = node("Attenuation", "multiply")
+    keymix, _ = node("Keymix", "channels", "maskChannel")
+    blur, blur_knobs = node("Blur", "size")
+    nuke = MagicMock()
+    nuke.nodes.Grade.side_effect = [grade, attenuation]
+    nuke.nodes.Cryptomatte.return_value = matte
+    nuke.nodes.Keymix.return_value = keymix
+    nuke.nodes.Blur.return_value = blur
+    read, source = object(), object()
+    layer = {
+        "adjustments": [
+            {"kind": "grade", "gain": 1.08, "gamma": 1.05},
+            {
+                "kind": "material_gain",
+                "name": "Guide",
+                "crypto_layer": "CryptoMaterials",
+                "materials": ["/mat/Guide"],
+                "gain": 0.06,
+            },
+            {"kind": "blur", "size": 24.0},
+        ]
+    }
+
+    result, created = _apply_layer_adjustments(nuke, source, layer, 0, matte_source=read)
+
+    grade.setInput.assert_called_once_with(0, source)
+    grade_knobs["multiply"].setValue.assert_called_once_with(1.08)
+    grade_knobs["gamma"].setValue.assert_called_once_with(1.05)
+    matte.setInput.assert_called_once_with(0, read)
+    matte_knobs["cryptoLayer"].setValue.assert_called_once_with("CryptoMaterials")
+    matte_knobs["matteList"].setValue.assert_called_once_with("/mat/Guide")
+    attenuation.setInput.assert_called_once_with(0, grade)
+    attenuation_knobs["multiply"].setValue.assert_called_once_with(0.06)
+    assert [call.args for call in keymix.setInput.call_args_list] == [(0, grade), (1, attenuation), (2, matte)]
+    blur.setInput.assert_called_once_with(0, keymix)
+    blur_knobs["size"].setValue.assert_called_once_with(24.0)
+    assert result is blur
+    assert created == ["Grade", "Matte", "Attenuation", "Keymix", "Blur"]
+
+
+def test_multilayer_channel_requirements_and_write_options():
+    class Read:
+        @staticmethod
+        def channels():
+            return ["rgba.red", "combinedemission.red", "CryptoMaterials.red"]
+
+    compositing._require_layers(Read(), ["rgba", "combinedemission", "CryptoMaterials"])
+
+    with pytest.raises(RuntimeError, match="combinedvolume"):
+        compositing._require_layers(Read(), ["combinedvolume"])
+
+    shuffle = MagicMock()
+    shuffle.knobs.return_value = {"in": MagicMock()}
+    shuffle.__getitem__.side_effect = shuffle.knobs.return_value.__getitem__
+    nuke = MagicMock()
+    nuke.nodes.Shuffle.return_value = shuffle
+    read = object()
+    compositing._shuffle_layer(nuke, read, "combinedemission", 1)
+    shuffle.setInput.assert_called_once_with(0, read)
+    shuffle.knobs.return_value["in"].setValue.assert_called_once_with("combinedemission")
+
+    write = MagicMock()
+    write.knobs.return_value = {"colorspace": MagicMock(), "datatype": MagicMock()}
+    write.__getitem__.side_effect = write.knobs.return_value.__getitem__
+    compositing._set_write_options(write, {"output_colorspace": "sRGB", "output_datatype": "16 bit"})
+    write.knobs.return_value["colorspace"].setValue.assert_called_once_with("sRGB")
+    write.knobs.return_value["datatype"].setValue.assert_called_once_with("16 bit")
 
 
 @pytest.mark.parametrize("field", ["gain", "blur_size"])
