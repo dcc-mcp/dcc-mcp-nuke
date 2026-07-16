@@ -13,6 +13,6 @@ port. Use `dcc-mcp-cli list` or the stable gateway at
 `http://127.0.0.1:9765/mcp` to discover and connect to the running instance.
 Set `DCC_MCP_NUKE_PORT` only when a fixed direct port is required.
 
-The bundled `nuke-script` skill inspects scripts and nodes and can explicitly
-save the current script. Releases are published through `release.yaml` and the
-GitHub `pypi` environment.
+The bundled `nuke-script` skill can open an existing absolute `.nk` path,
+inspect scripts and nodes, and explicitly save the current script. Releases are
+published through `release.yaml` and the GitHub `pypi` environment.
