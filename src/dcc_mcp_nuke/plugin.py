@@ -14,3 +14,15 @@ def initialize() -> None:
 
 def shutdown() -> None:
     stop_server()
+
+
+def install_menu(nuke_module=None) -> None:
+    """Install idempotent Nuke menu commands for adapter lifecycle control."""
+    if nuke_module is None:
+        import nuke as nuke_module
+    root = nuke_module.menu("Nuke")
+    menu = root.findItem("DCC-MCP") or root.addMenu("DCC-MCP")
+    if menu.findItem("Start Server") is None:
+        menu.addCommand("Start Server", initialize)
+    if menu.findItem("Stop Server") is None:
+        menu.addCommand("Stop Server", shutdown)
