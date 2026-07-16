@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.4.1](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.4.0...v0.4.1) (2026-07-16)
+
+
+### Bug Fixes
+
+* isolate Nuke menu registration failures ([#9](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/9)) ([4bcd8e4](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/4bcd8e4bc017fb9d5199b8bc7548fae3615cbb2e))
+
 ## [0.4.0](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.3.1...v0.4.0) (2026-07-16)
 
 
