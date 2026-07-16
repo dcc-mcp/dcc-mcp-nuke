@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.7.0](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.6.0...v0.7.0) (2026-07-16)
+
+
+### Features
+
+* lay out layered comp nodes deterministically ([#17](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/17)) ([1fc930d](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/1fc930d9930bc582f85a6076cc712a88c4023d45))
+
+
+### Bug Fixes
+
+* use OS-assigned MCP instance ports ([#16](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/16)) ([0170739](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/01707395edb973bd99f6df3b73b4c4a550bf4050))
+
 ## [0.6.0](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.5.0...v0.6.0) (2026-07-16)
 
 
