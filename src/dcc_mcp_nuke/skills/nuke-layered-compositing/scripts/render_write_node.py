@@ -6,9 +6,12 @@ def main(write_node: str, first_frame: int, last_frame: int, step: int = 1, **_k
     import nuke
 
     if last_frame < first_frame:
-        return skill_error("last_frame must be greater than or equal to first_frame")
+        return skill_error(
+            "last_frame must be greater than or equal to first_frame",
+            f"last_frame={last_frame} is less than first_frame={first_frame}",
+        )
     if step < 1:
-        return skill_error("step must be greater than or equal to 1")
+        return skill_error("step must be greater than or equal to 1", f"step={step} is less than 1")
     node = nuke.toNode(write_node)
     if node is None or node.Class() != "Write":
         return skill_error("Write node not found", write_node)
