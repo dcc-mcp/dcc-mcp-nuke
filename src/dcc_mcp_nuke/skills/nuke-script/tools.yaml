@@ -1,4 +1,17 @@
 tools:
+  - name: open_script
+    description: Open an existing absolute .nk path and verify the loaded Root and graph.
+    input_schema:
+      type: object
+      required: [path]
+      properties: {path: {type: string, description: Absolute path to an existing .nk script.}}
+    read_only: false
+    destructive: true
+    idempotent: false
+    execution: sync
+    affinity: main
+    timeout_hint_secs: 60
+    source_file: scripts/open_script.py
   - name: inspect_script
     description: Inspect the active Nuke script, frame range, and selected nodes without changing it.
     input_schema: {type: object, properties: {}}
