@@ -34,10 +34,14 @@ class NukeDispatcher:
     def stop(self) -> None:
         """Detach the UI callback and reject any remaining queued work."""
         timer = self._timer
+        self._timer = None
         if timer is not None:
-            timer.stop()
-            timer.timeout.disconnect(self._update_callback)
-            self._timer = None
+            try:
+                timer.stop()
+                timer.timeout.disconnect(self._update_callback)
+            except RuntimeError:
+                # Nuke may destroy Qt objects before Python atexit handlers run.
+                pass
         self._host_dispatcher.shutdown()
 
     @staticmethod
