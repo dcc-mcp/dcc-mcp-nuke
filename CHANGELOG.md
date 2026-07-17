@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.13.0](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.12.2...v0.13.0) (2026-07-17)
+
+
+### Features
+
+* add bounded Nuke channel statistics ([#37](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/37)) ([2bec78c](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/2bec78cf282323d13105a2c7e68307e9b109ff2e))
+
 ## [0.12.2](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.12.1...v0.12.2) (2026-07-17)
 
 
