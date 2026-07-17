@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.12.0](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.11.0...v0.12.0) (2026-07-17)
+
+
+### Features
+
+* add registered Gizmo contract tools ([#31](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/31)) ([b8ee230](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/b8ee230455f62994ccd41607aa7952ae695ad219))
+
 ## [0.11.0](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.10.1...v0.11.0) (2026-07-17)
 
 
