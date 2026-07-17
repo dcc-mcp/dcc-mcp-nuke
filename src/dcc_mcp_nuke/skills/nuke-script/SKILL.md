@@ -23,4 +23,4 @@ metadata:
 Use `nuke_script__open_script` to restore an existing absolute `.nk` path. The
 tool verifies the active script path, Root frame range, and loaded node count
 before reporting success. Opening replaces the current graph, so save any
-unsaved work first.
+unsaved work first or explicitly set `discard_unsaved_changes` to `true`.

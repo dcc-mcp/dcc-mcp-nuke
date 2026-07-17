@@ -4,7 +4,12 @@ tools:
     input_schema:
       type: object
       required: [path]
-      properties: {path: {type: string, description: Absolute path to an existing .nk script.}}
+      properties:
+        path: {type: string, description: Absolute path to an existing .nk script.}
+        discard_unsaved_changes:
+          type: boolean
+          default: false
+          description: Explicitly allow replacing a modified current script without saving it.
     read_only: false
     destructive: true
     idempotent: false

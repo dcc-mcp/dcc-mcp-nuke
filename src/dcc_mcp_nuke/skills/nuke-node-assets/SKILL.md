@@ -29,6 +29,7 @@ clean-load, render, and channel-preservation evidence.
 The earlier path-based `package_gizmo`, `instantiate_gizmo`, and
 `inspect_gizmo` tools remain for compatibility. They do not provide the
 registered-asset security contract and should not be used for untrusted assets.
+`inspect_gizmo` accepts both legacy and registered-asset manifest knob layouts.
 
 Package a new version to a new filename. Instance-preserving graph upgrades are
 not part of this skill yet.

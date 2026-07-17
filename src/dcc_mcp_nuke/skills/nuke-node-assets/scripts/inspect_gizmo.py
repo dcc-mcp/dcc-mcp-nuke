@@ -1,4 +1,5 @@
 import json
+from collections.abc import Mapping
 
 from dcc_mcp_core.skill import skill_entry, skill_error, skill_success
 
@@ -13,7 +14,8 @@ def main(node_name, **_kwargs):
 
     issues = []
     manifest = {}
-    manifest_knob = node.knob("dcc_mcp_asset_manifest")
+    knobs = node.knobs()
+    manifest_knob = knobs.get("dcc_mcp_asset_manifest")
     if manifest_knob is None:
         issues.append("DCC MCP asset manifest is missing")
     else:
@@ -23,8 +25,12 @@ def main(node_name, **_kwargs):
             issues.append("DCC MCP asset manifest is invalid")
 
     exposed = []
-    for name in manifest.get("exposed_knobs", []):
-        knob = node.knob(name)
+    for item in manifest.get("exposed_knobs", []):
+        name = item.get("name") if isinstance(item, Mapping) else item
+        if not isinstance(name, str):
+            issues.append("exposed knob manifest entry is invalid")
+            continue
+        knob = knobs.get(name)
         if knob is None:
             issues.append("exposed knob is missing: {}".format(name))
             continue
@@ -47,7 +53,7 @@ def main(node_name, **_kwargs):
         "Inspected Nuke Gizmo",
         node_name=node.name(),
         node_class=node.Class(),
-        asset_name=manifest.get("name"),
+        asset_name=manifest.get("gizmo_id") or manifest.get("name"),
         version=manifest.get("version"),
         valid=not issues,
         issues=issues,
