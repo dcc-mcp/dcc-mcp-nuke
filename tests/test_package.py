@@ -23,3 +23,8 @@ def test_bundled_contract_files_exist():
     assert package.joinpath("nuke_plugin", "menu.py").exists()
     assert package.joinpath("skills", "nuke-script", "tools.yaml").exists()
     assert package.joinpath("skills", "nuke-script", "scripts", "open_script.py").exists()
+    gizmo_scripts = package / "skills" / "nuke-node-assets" / "scripts"
+    assert all(
+        gizmo_scripts.joinpath(name).exists()
+        for name in ("gizmo_create_from_group.py", "gizmo_instantiate.py", "gizmo_validate.py")
+    )
