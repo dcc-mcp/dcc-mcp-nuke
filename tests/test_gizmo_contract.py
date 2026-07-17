@@ -151,6 +151,7 @@ def contract():
 def test_create_is_root_confined_versioned_and_deterministic(tmp_path, monkeypatch):
     monkeypatch.setenv("DCC_MCP_NUKE_PLUGIN_ROOT", str(tmp_path))
     grade = Node("Grade1")
+    grade._knobs["multiply"] = Knob("multiply", 1.0, "WH_Knob")
     group = Node("AtmosphereGroup", "Group", [Node("Input1", "Input"), grade])
     nuke = FakeNuke(group)
 

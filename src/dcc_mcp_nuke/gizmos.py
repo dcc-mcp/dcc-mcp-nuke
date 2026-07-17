@@ -23,7 +23,7 @@ _EXECUTABLE_KNOB = re.compile(
 _DEPENDENCY = re.compile(r"(?im)^\s*(file|font|lut|ocio_config)\s+(.+?)\s*$")
 _KNOB_TYPES = {"float", "integer", "boolean", "string", "color"}
 _NUKE_KNOB_TYPES = {
-    "float": {"Double_Knob", "Scale_Knob", "Array_Knob"},
+    "float": {"Double_Knob", "Scale_Knob", "Array_Knob", "WH_Knob"},
     "integer": {"Int_Knob", "Unsigned_Knob"},
     "boolean": {"Boolean_Knob"},
     "string": {"String_Knob", "File_Knob", "Multiline_Eval_String_Knob"},
