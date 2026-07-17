@@ -134,6 +134,48 @@ def test_manifest_normalizes_material_edge_blur(tmp_path):
     ]
 
 
+def test_manifest_normalizes_bounded_material_albedo_fill(tmp_path):
+    value = manifest(tmp_path)
+    value["layers"][0]["adjustments"] = [
+        {
+            "kind": "material_albedo_fill",
+            "name": "Outer_Planet_Readability",
+            "crypto_layer": "CryptoMaterials",
+            "materials": ["/mat/Saturn", "/mat/Neptune"],
+            "albedo_layer": "albedo",
+            "strength": 0.12,
+        }
+    ]
+
+    result = validate_manifest(value)
+
+    assert result["layers"][0]["adjustments"] == [
+        {
+            "kind": "material_albedo_fill",
+            "name": "Outer_Planet_Readability",
+            "crypto_layer": "CryptoMaterials",
+            "materials": ["/mat/Saturn", "/mat/Neptune"],
+            "albedo_layer": "albedo",
+            "strength": 0.12,
+        }
+    ]
+
+
+def test_manifest_rejects_material_albedo_fill_above_creative_limit(tmp_path):
+    value = manifest(tmp_path)
+    value["layers"][0]["adjustments"] = [
+        {
+            "kind": "material_albedo_fill",
+            "crypto_layer": "CryptoMaterials",
+            "materials": ["/mat/Saturn"],
+            "strength": 0.251,
+        }
+    ]
+
+    with pytest.raises(ValueError, match="strength must be between 0 and 0.25"):
+        validate_manifest(value)
+
+
 @pytest.mark.parametrize(
     ("kind", "field"),
     [("material_saturation", "saturation"), ("material_edge_blur", "size")],
@@ -260,6 +302,96 @@ def test_material_edge_blur_feathers_only_the_selected_cryptomatte_then_premulti
     ]
 
 
+def test_build_adds_bounded_albedo_only_inside_selected_materials_and_preserves_alpha(tmp_path):
+    def node(name, *knob_names):
+        value = MagicMock()
+        value.name.return_value = name
+        knobs = {knob_name: MagicMock() for knob_name in knob_names}
+        value.knobs.return_value = knobs
+        value.__getitem__.side_effect = knobs.__getitem__
+        return value, knobs
+
+    read, _ = node("Read", "first", "last", "origfirst", "origlast")
+    read.channels.return_value = ["rgba.red", "albedo.red", "CryptoMaterials.red", "C_Sun.red"]
+    beauty, beauty_knobs = node("Beauty", "in")
+    albedo, albedo_knobs = node("Outer_Planet_Readability_Albedo", "in")
+    matte, matte_knobs = node("Outer_Planet_Readability_Crypto", "cryptoLayer", "matteList")
+    clamp, clamp_knobs = node(
+        "Outer_Planet_Readability_Bounded_Albedo",
+        "channels",
+        "minimum",
+        "minimum_enable",
+        "maximum",
+        "maximum_enable",
+    )
+    fill, fill_knobs = node("Outer_Planet_Readability_Creative_Fill", "multiply")
+    merge, merge_knobs = node(
+        "Outer_Planet_Readability_Material_Albedo_Fill",
+        "operation",
+        "Achannels",
+        "Bchannels",
+        "output",
+        "maskChannelInput",
+    )
+    reformat, _ = node("Reformat", "type", "format", "resize")
+    write, _ = node("Write", "file_type")
+    root, _ = node("Root", "first_frame", "last_frame", "fps", "format")
+    nuke = MagicMock()
+    nuke.allNodes.return_value = []
+    nuke.root.return_value = root
+    nuke.nodes.Read.return_value = read
+    nuke.nodes.Shuffle.side_effect = [beauty, albedo]
+    nuke.nodes.Cryptomatte.return_value = matte
+    nuke.nodes.Clamp.return_value = clamp
+    nuke.nodes.Grade.return_value = fill
+    nuke.nodes.Merge2.return_value = merge
+    nuke.nodes.Reformat.return_value = reformat
+    nuke.nodes.Write.return_value = write
+    value = manifest(tmp_path)
+    value["layers"] = [
+        {
+            "name": "Beauty",
+            "path": str(tmp_path / "beauty.%04d.exr"),
+            "channel": "rgba",
+            "adjustments": [
+                {
+                    "kind": "material_albedo_fill",
+                    "name": "Outer_Planet_Readability",
+                    "crypto_layer": "CryptoMaterials",
+                    "materials": ["/mat/Saturn", "/mat/Neptune"],
+                    "albedo_layer": "albedo",
+                    "strength": 0.12,
+                }
+            ],
+        }
+    ]
+
+    result = compositing.build_layered_comp(nuke, value)
+
+    beauty_knobs["in"].setValue.assert_called_once_with("rgba")
+    albedo.setInput.assert_called_once_with(0, read)
+    albedo_knobs["in"].setValue.assert_called_once_with("albedo")
+    matte.setInput.assert_called_once_with(0, read)
+    matte_knobs["cryptoLayer"].setValue.assert_called_once_with("CryptoMaterials")
+    matte_knobs["matteList"].setValue.assert_called_once_with("/mat/Saturn, /mat/Neptune")
+    clamp.setInput.assert_called_once_with(0, albedo)
+    clamp_knobs["channels"].setValue.assert_called_once_with("rgb")
+    clamp_knobs["minimum"].setValue.assert_called_once_with(0.0)
+    clamp_knobs["minimum_enable"].setValue.assert_called_once_with(True)
+    clamp_knobs["maximum"].setValue.assert_called_once_with(1.0)
+    clamp_knobs["maximum_enable"].setValue.assert_called_once_with(True)
+    fill.setInput.assert_called_once_with(0, clamp)
+    fill_knobs["multiply"].setValue.assert_called_once_with(0.12)
+    assert [call.args for call in merge.setInput.call_args_list] == [(0, beauty), (1, fill), (2, matte)]
+    merge_knobs["operation"].setValue.assert_called_once_with("plus")
+    merge_knobs["Achannels"].setValue.assert_called_once_with("rgb")
+    merge_knobs["Bchannels"].setValue.assert_called_once_with("rgb")
+    merge_knobs["output"].setValue.assert_called_once_with("rgb")
+    merge_knobs["maskChannelInput"].setValue.assert_called_once_with("rgba.alpha")
+    reformat.setInput.assert_called_once_with(0, merge)
+    assert "C_Sun" not in " ".join(result["adjustment_nodes"])
+
+
 def test_multilayer_adjustments_preserve_declared_order():
     def node(name, *knob_names):
         value = MagicMock()
@@ -340,7 +472,7 @@ def test_multilayer_channel_requirements_and_write_options():
     write.knobs.return_value["datatype"].setValue.assert_called_once_with("16 bit")
 
 
-@pytest.mark.parametrize("kind", ["material_saturation", "material_edge_blur"])
+@pytest.mark.parametrize("kind", ["material_saturation", "material_edge_blur", "material_albedo_fill"])
 def test_build_rejects_missing_cryptomatte_for_scoped_adjustments(tmp_path, kind):
     def node(name, *knob_names):
         value = MagicMock()
@@ -375,14 +507,51 @@ def test_build_rejects_missing_cryptomatte_for_scoped_adjustments(tmp_path, kind
         compositing.build_layered_comp(nuke, value)
 
 
+def test_build_rejects_missing_albedo_before_creating_fill_nodes(tmp_path):
+    def node(name, *knob_names):
+        value = MagicMock()
+        knobs = {knob_name: MagicMock() for knob_name in knob_names}
+        value.name.return_value = name
+        value.knobs.return_value = knobs
+        value.__getitem__.side_effect = knobs.__getitem__
+        return value
+
+    read = node("Read", "first", "last", "origfirst", "origlast")
+    read.channels.return_value = ["rgba.red", "CryptoMaterials.red"]
+    root = node("Root", "first_frame", "last_frame", "fps", "format")
+    nuke = MagicMock()
+    nuke.allNodes.return_value = []
+    nuke.root.return_value = root
+    nuke.nodes.Read.return_value = read
+    value = manifest(tmp_path)
+    value["layers"] = [
+        {
+            "path": str(tmp_path / "beauty.%04d.exr"),
+            "adjustments": [
+                {
+                    "kind": "material_albedo_fill",
+                    "crypto_layer": "CryptoMaterials",
+                    "materials": ["/mat/Saturn"],
+                }
+            ],
+        }
+    ]
+
+    with pytest.raises(RuntimeError, match="albedo"):
+        compositing.build_layered_comp(nuke, value)
+    nuke.nodes.Cryptomatte.assert_not_called()
+
+
 def test_material_adjustments_reserve_branch_rows_in_the_graph():
     base = {"channel": None, "gain": 1.0, "blur_size": 0.0}
 
     saturation = {**base, "adjustments": [{"kind": "material_saturation"}]}
     edge_blur = {**base, "adjustments": [{"kind": "material_edge_blur"}]}
+    albedo_fill = {**base, "adjustments": [{"kind": "material_albedo_fill"}]}
 
     assert compositing._layer_row_count(saturation) == 2
     assert compositing._layer_row_count(edge_blur) == 5
+    assert compositing._layer_row_count(albedo_fill) == 4
 
 
 @pytest.mark.parametrize("field", ["gain", "blur_size"])
