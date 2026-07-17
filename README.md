@@ -16,3 +16,7 @@ Set `DCC_MCP_NUKE_PORT` only when a fixed direct port is required.
 The bundled `nuke-script` skill can open an existing absolute `.nk` path,
 inspect scripts and nodes, and explicitly save the current script. Releases are
 published through `release.yaml` and the GitHub `pypi` environment.
+
+The `nuke-node-assets` skill packages reusable, versioned Gizmos with an
+explicit public knob interface, instantiates saved assets, and validates live
+instances.
