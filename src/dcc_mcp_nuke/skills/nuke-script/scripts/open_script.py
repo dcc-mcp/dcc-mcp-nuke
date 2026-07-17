@@ -4,7 +4,7 @@ from dcc_mcp_core.skill import skill_entry, skill_error, skill_success
 
 
 @skill_entry
-def main(path: str, **_kwargs):
+def main(path: str, discard_unsaved_changes: bool = False, **_kwargs):
     candidate = Path(path).expanduser()
     if not candidate.is_absolute():
         return skill_error("Invalid Nuke script path", "path must be absolute")
@@ -19,6 +19,13 @@ def main(path: str, **_kwargs):
 
     import nuke  # Lazy import: requires Nuke.
 
+    if nuke.root().modified() and not discard_unsaved_changes:
+        return skill_error(
+            "Failed to open Nuke script",
+            "current script has unsaved changes; set discard_unsaved_changes to true",
+        )
+
+    nuke.scriptClear()
     nuke.scriptOpen(str(target))
     opened = Path(nuke.scriptName()).expanduser().resolve()
     if opened != target:

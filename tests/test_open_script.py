@@ -15,18 +15,20 @@ def _load_open_module():
     return module
 
 
-def _fake_nuke(script_path: Path, *, node_count: int = 3):
+def _fake_nuke(script_path: Path, *, node_count: int = 3, modified: bool = False):
     first_frame = MagicMock()
     first_frame.value.return_value = 1
     last_frame = MagicMock()
     last_frame.value.return_value = 1440
     root = MagicMock()
+    root.modified.return_value = modified
     root.__getitem__.side_effect = {
         "first_frame": first_frame,
         "last_frame": last_frame,
     }.__getitem__
 
     nuke = ModuleType("nuke")
+    nuke.scriptClear = MagicMock()
     nuke.scriptOpen = MagicMock()
     nuke.scriptName = MagicMock(return_value=str(script_path))
     nuke.root = MagicMock(return_value=root)
@@ -44,6 +46,7 @@ def test_open_script_loads_absolute_nk_and_reports_postconditions(tmp_path, monk
     result = module.main.__wrapped__(str(target))
 
     nuke.scriptOpen.assert_called_once_with(str(target.resolve()))
+    nuke.scriptClear.assert_called_once_with()
     assert result["success"] is True
     assert result["context"] == {
         "path": str(target.resolve()),
@@ -91,3 +94,32 @@ def test_open_script_rejects_failed_path_postcondition(tmp_path, monkeypatch):
 
     assert result["success"] is False
     assert result["error"] == "opened path does not match requested script"
+
+
+def test_open_script_preserves_unsaved_graph_without_explicit_discard(tmp_path, monkeypatch):
+    module = _load_open_module()
+    target = tmp_path / "requested.nk"
+    target.write_text("Root {}", encoding="utf-8")
+    nuke = _fake_nuke(target, modified=True)
+    monkeypatch.setitem(sys.modules, "nuke", nuke)
+
+    result = module.main.__wrapped__(str(target))
+
+    assert result["success"] is False
+    assert result["error"] == "current script has unsaved changes; set discard_unsaved_changes to true"
+    nuke.scriptClear.assert_not_called()
+    nuke.scriptOpen.assert_not_called()
+
+
+def test_open_script_replaces_unsaved_graph_when_discard_is_explicit(tmp_path, monkeypatch):
+    module = _load_open_module()
+    target = tmp_path / "requested.nk"
+    target.write_text("Root {}", encoding="utf-8")
+    nuke = _fake_nuke(target, modified=True)
+    monkeypatch.setitem(sys.modules, "nuke", nuke)
+
+    result = module.main.__wrapped__(str(target), discard_unsaved_changes=True)
+
+    assert result["success"] is True
+    nuke.scriptClear.assert_called_once_with()
+    nuke.scriptOpen.assert_called_once_with(str(target.resolve()))

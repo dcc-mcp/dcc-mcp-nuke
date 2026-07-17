@@ -209,3 +209,41 @@ def test_inspect_gizmo_reports_manifest_interface_and_validation(monkeypatch):
         ],
         "exposed_knobs": [{"name": "bloom_gain", "label": "Bloom Gain", "link": "Grade1.multiply"}],
     }
+
+
+def test_inspect_gizmo_uses_knob_mapping_for_registered_asset_manifest(monkeypatch):
+    module = _load_script("inspect_gizmo.py")
+    instance = _Node("SolarFinish1", "DccMcpSolarFinish")
+    manifest = _Knob("dcc_mcp_asset_manifest")
+    manifest.setValue(
+        json.dumps(
+            {
+                "gizmo_id": "solar.system.finish",
+                "version": "1.0.0",
+                "exposed_knobs": [
+                    {
+                        "name": "bloom_gain",
+                        "label": "Bloom Gain",
+                        "target_node": "Grade1",
+                        "target_knob": "multiply",
+                        "type": "float",
+                    }
+                ],
+            }
+        )
+    )
+    instance.addKnob(manifest)
+    instance.addKnob(_Knob("bloom_gain", "Bloom Gain"))
+    instance.knob = MagicMock(side_effect=TypeError("knob() takes at least 2 arguments (1 given)"))
+
+    nuke = ModuleType("nuke")
+    nuke.toNode = MagicMock(return_value=instance)
+    monkeypatch.setitem(sys.modules, "nuke", nuke)
+
+    result = module.main.__wrapped__(node_name="SolarFinish1")
+
+    assert result["success"] is True
+    assert result["context"]["valid"] is True
+    assert result["context"]["asset_name"] == "solar.system.finish"
+    assert result["context"]["exposed_knobs"] == [{"name": "bloom_gain", "label": "Bloom Gain", "link": None}]
+    instance.knob.assert_not_called()
