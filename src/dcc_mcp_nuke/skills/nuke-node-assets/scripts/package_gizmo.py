@@ -100,7 +100,8 @@ def main(
     temporary = target.with_name(".{}.dcc-mcp.tmp".format(target.name))
     temporary.unlink(missing_ok=True)
     try:
-        if not nuke.nodeCopy(str(temporary)):
+        nuke.nodeCopy(str(temporary))
+        if not temporary.is_file():
             return skill_error("Failed to package Gizmo", "Nuke did not serialize the Group")
         _normalize_gizmo(temporary)
         temporary.replace(target)
