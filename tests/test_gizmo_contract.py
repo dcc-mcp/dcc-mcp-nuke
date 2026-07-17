@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 
@@ -178,6 +179,32 @@ def test_create_rejects_callbacks_before_publishing(tmp_path, monkeypatch):
         gizmos.create_from_group(nuke, group_node="Unsafe", conflict_policy="write_versioned", **contract())
 
     assert not list(tmp_path.rglob("*.gizmo"))
+
+
+@pytest.mark.parametrize("conflict_policy", ["fail", "write_versioned"])
+def test_create_race_refuses_overwrite_and_preserves_existing_bytes(tmp_path, monkeypatch, conflict_policy):
+    monkeypatch.setenv("DCC_MCP_NUKE_PLUGIN_ROOT", str(tmp_path))
+    grade = Node("Grade1")
+    grade._knobs["multiply"] = Knob("multiply", 1.0, "WH_Knob")
+    group = Node("AtmosphereGroup", "Group", [Node("Input1", "Input"), grade])
+    nuke = FakeNuke(group)
+    target = tmp_path / "dcc.atmosphere_glow" / "1.0.0" / f"{gizmos._class_name('dcc.atmosphere_glow')}.gizmo"
+    original = b"existing gizmo\n"
+    original_node_copy = nuke.nodeCopy
+
+    def node_copy(path):
+        original_node_copy(path)
+        target.write_bytes(original)
+
+    nuke.nodeCopy = node_copy
+    before = hashlib.sha256(original).hexdigest()
+
+    with pytest.raises(FileExistsError, match="refusing to overwrite"):
+        gizmos.create_from_group(nuke, group_node="AtmosphereGroup", conflict_policy=conflict_policy, **contract())
+
+    assert hashlib.sha256(target.read_bytes()).hexdigest() == before
+    assert not list(target.parent.glob("*.dcc-mcp.tmp"))
+    assert group.name() == "AtmosphereGroup"
 
 
 def test_instantiate_is_idempotent_and_range_checked(tmp_path, monkeypatch):

@@ -150,6 +150,7 @@ tools:
         overwrite:
           type: boolean
           default: false
+          description: Refuse existing or concurrently-created destinations unless explicitly true.
     read_only: false
     destructive: true
     idempotent: false

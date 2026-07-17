@@ -1,3 +1,4 @@
+import hashlib
 import importlib.util
 import json
 import sys
@@ -138,6 +139,41 @@ def test_package_gizmo_groups_nodes_exposes_knobs_and_writes_versioned_asset(tmp
         "exposed_knobs": ["bloom_gain"],
     }
     nuke.collapseToGroup.assert_called_once_with(show=False)
+
+
+def test_package_gizmo_race_refuses_overwrite_and_preserves_existing_bytes(tmp_path, monkeypatch):
+    module = _load_script("package_gizmo.py")
+    grade = _Node("Grade1")
+    group = _Node("Group1", "Group", [grade])
+    target = tmp_path / "SolarBloom.gizmo"
+    original = b"existing gizmo\n"
+
+    nuke = ModuleType("nuke")
+    nuke.INVISIBLE = 0x400
+    nuke.allNodes = MagicMock(return_value=[grade])
+    nuke.toNode = MagicMock(return_value=grade)
+    nuke.collapseToGroup = MagicMock(return_value=group)
+    nuke.Link_Knob = _Knob
+    nuke.String_Knob = _Knob
+
+    def node_copy(path):
+        Path(path).write_text("Group {\n name SolarBloom\n}\n", encoding="utf-8")
+        target.write_bytes(original)
+
+    nuke.nodeCopy = MagicMock(side_effect=node_copy)
+    monkeypatch.setitem(sys.modules, "nuke", nuke)
+
+    before = hashlib.sha256(original).hexdigest()
+    result = module.main.__wrapped__(
+        node_names=["Grade1"],
+        gizmo_name="SolarBloom",
+        output_path=str(target),
+    )
+
+    assert result["success"] is False
+    assert "refusing to overwrite" in result["error"]
+    assert hashlib.sha256(target.read_bytes()).hexdigest() == before
+    assert not list(tmp_path.glob(".*.dcc-mcp.tmp"))
 
 
 def test_instantiate_gizmo_loads_asset_and_applies_exposed_knobs(tmp_path, monkeypatch):
