@@ -48,11 +48,12 @@ tools:
                       type: object
                       required: [kind]
                       properties:
-                        kind: {type: string, enum: [grade, material_gain, blur]}
+                        kind: {type: string, enum: [grade, material_gain, material_saturation, material_edge_blur, blur]}
                         name: {type: string, minLength: 1}
                         gain: {type: number, minimum: 0, default: 1}
                         gamma: {type: number, exclusiveMinimum: 0, default: 1}
-                        size: {type: number, minimum: 0, default: 0}
+                        saturation: {type: number, minimum: 0, default: 1, description: Saturation multiplier for material_saturation.}
+                        size: {type: number, minimum: 0, default: 0, description: Blur radius for blur or material_edge_blur.}
                         crypto_layer: {type: string, minLength: 1}
                         materials:
                           type: array
