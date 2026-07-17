@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.12.2](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.12.1...v0.12.2) (2026-07-17)
+
+
+### Bug Fixes
+
+* restore script loading and Gizmo inspection ([#35](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/35)) ([2cbbf61](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/2cbbf611ce9ea80299cbcaad8eca538bae78ffec))
+
 ## [0.12.1](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.12.0...v0.12.1) (2026-07-17)
 
 
