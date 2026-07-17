@@ -33,7 +33,11 @@ tools:
                   name: {type: string}
                   path: {type: string}
                   channel: {type: string, minLength: 1, description: Optional EXR layer to extract with Shuffle.}
-                  operation: {type: string, enum: [over, plus, multiply, screen, max, min], default: over}
+                  operation:
+                    type: string
+                    enum: [over, plus, minus, multiply, screen, max, min]
+                    default: over
+                    description: Nuke Merge operation; the new layer is input A and the accumulated composite is input B.
                   colorspace: {type: string}
                   gain: {type: number, minimum: 0, default: 1}
                   blur_size: {type: number, minimum: 0, default: 0}

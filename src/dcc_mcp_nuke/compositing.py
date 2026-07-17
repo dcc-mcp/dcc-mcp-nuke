@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 from typing import Any, Mapping
 
-MERGE_OPERATIONS = {"over", "plus", "multiply", "screen", "max", "min"}
+MERGE_OPERATIONS = {"over", "plus", "minus", "multiply", "screen", "max", "min"}
 ADJUSTMENT_KINDS = {"grade", "material_gain", "blur"}
 NODE_COLUMN_SPACING = 320
 NODE_ROW_SPACING = 100
@@ -387,7 +387,7 @@ def _set_read_frame_range(read: Any, first: int, last: int) -> None:
 
 
 def _connect_merge(merge: Any, background: Any, foreground: Any) -> None:
-    """Connect Nuke Merge B (background) and A (foreground) inputs explicitly."""
+    """Connect Nuke input 0 as B and input 1 as A; ``minus`` therefore evaluates A-B."""
     merge.setInput(0, background)
     merge.setInput(1, foreground)
 
