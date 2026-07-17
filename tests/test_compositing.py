@@ -86,6 +86,180 @@ def test_manifest_normalizes_multilayer_exr_pipeline(tmp_path):
     assert result["layers"][0]["adjustments"][1]["materials"] == ["/mat/Celestial_HUD_Emission"]
 
 
+def test_manifest_normalizes_material_saturation(tmp_path):
+    value = manifest(tmp_path)
+    value["layers"][0]["adjustments"] = [
+        {
+            "kind": "material_saturation",
+            "crypto_layer": "CryptoMaterials",
+            "materials": ["/mat/Earth"],
+            "saturation": 0.35,
+        }
+    ]
+
+    result = validate_manifest(value)
+
+    assert result["layers"][0]["adjustments"] == [
+        {
+            "kind": "material_saturation",
+            "name": None,
+            "crypto_layer": "CryptoMaterials",
+            "materials": ["/mat/Earth"],
+            "saturation": 0.35,
+        }
+    ]
+
+
+def test_manifest_normalizes_material_edge_blur(tmp_path):
+    value = manifest(tmp_path)
+    value["layers"][0]["adjustments"] = [
+        {
+            "kind": "material_edge_blur",
+            "crypto_layer": "CryptoMaterials",
+            "materials": ["/mat/Card"],
+            "size": 2.5,
+        }
+    ]
+
+    result = validate_manifest(value)
+
+    assert result["layers"][0]["adjustments"] == [
+        {
+            "kind": "material_edge_blur",
+            "name": None,
+            "crypto_layer": "CryptoMaterials",
+            "materials": ["/mat/Card"],
+            "size": 2.5,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("kind", "field"),
+    [("material_saturation", "saturation"), ("material_edge_blur", "size")],
+)
+def test_manifest_rejects_negative_material_adjustments(tmp_path, kind, field):
+    value = manifest(tmp_path)
+    value["layers"][0]["adjustments"] = [
+        {
+            "kind": kind,
+            "crypto_layer": "CryptoMaterials",
+            "materials": ["/mat/Card"],
+            field: -0.1,
+        }
+    ]
+
+    with pytest.raises(ValueError, match=f"{field} must be non-negative"):
+        validate_manifest(value)
+
+
+def test_material_saturation_is_limited_to_the_selected_cryptomatte():
+    def node(name, *knob_names):
+        value = MagicMock()
+        value.name.return_value = name
+        knobs = {knob_name: MagicMock() for knob_name in knob_names}
+        value.knobs.return_value = knobs
+        value.__getitem__.side_effect = knobs.__getitem__
+        return value, knobs
+
+    matte, matte_knobs = node("Earth_Saturation_Crypto", "cryptoLayer", "matteList")
+    saturation, saturation_knobs = node("Earth_Saturation", "saturation")
+    keymix, keymix_knobs = node("Earth_Saturation_Material_Keymix", "channels", "maskChannel")
+    nuke = MagicMock()
+    nuke.nodes.Cryptomatte.return_value = matte
+    nuke.nodes.Saturation.return_value = saturation
+    nuke.nodes.Keymix.return_value = keymix
+    read, source = object(), object()
+    layer = {
+        "adjustments": [
+            {
+                "kind": "material_saturation",
+                "name": "Earth_Saturation",
+                "crypto_layer": "CryptoMaterials",
+                "materials": ["/mat/Earth"],
+                "saturation": 0.35,
+            }
+        ]
+    }
+
+    result, created = _apply_layer_adjustments(nuke, source, layer, 0, matte_source=read)
+
+    matte.setInput.assert_called_once_with(0, read)
+    matte_knobs["cryptoLayer"].setValue.assert_called_once_with("CryptoMaterials")
+    matte_knobs["matteList"].setValue.assert_called_once_with("/mat/Earth")
+    saturation.setInput.assert_called_once_with(0, source)
+    saturation_knobs["saturation"].setValue.assert_called_once_with(0.35)
+    assert [call.args for call in keymix.setInput.call_args_list] == [(0, source), (1, saturation), (2, matte)]
+    keymix_knobs["maskChannel"].setValue.assert_called_once_with("rgba.alpha")
+    assert result is keymix
+    assert created == ["Earth_Saturation_Crypto", "Earth_Saturation", "Earth_Saturation_Material_Keymix"]
+
+
+def test_material_edge_blur_feathers_only_the_selected_cryptomatte_then_premultiplies():
+    def node(name, *knob_names):
+        value = MagicMock()
+        value.name.return_value = name
+        knobs = {knob_name: MagicMock() for knob_name in knob_names}
+        value.knobs.return_value = knobs
+        value.__getitem__.side_effect = knobs.__getitem__
+        return value, knobs
+
+    matte, matte_knobs = node("Card_Edge_Crypto", "cryptoLayer", "matteList")
+    unpremult, unpremult_knobs = node("Card_Edge_Unpremult", "channels", "alpha")
+    matte_alpha, copy_knobs = node("Card_Edge_Matte_Alpha", "from0", "to0")
+    edge_blur, edge_knobs = node("Card_Edge_EdgeBlur", "channels", "size")
+    premult, premult_knobs = node("Card_Edge_Premult", "channels", "alpha")
+    keymix, keymix_knobs = node("Card_Edge_Material_Keymix", "channels", "maskChannel")
+    nuke = MagicMock()
+    nuke.nodes.Cryptomatte.return_value = matte
+    nuke.nodes.Unpremult.return_value = unpremult
+    nuke.nodes.Copy.return_value = matte_alpha
+    nuke.nodes.EdgeBlur.return_value = edge_blur
+    nuke.nodes.Premult.return_value = premult
+    nuke.nodes.Keymix.return_value = keymix
+    read, source = object(), object()
+    layer = {
+        "adjustments": [
+            {
+                "kind": "material_edge_blur",
+                "name": "Card_Edge",
+                "crypto_layer": "CryptoMaterials",
+                "materials": ["/mat/Card"],
+                "size": 2.5,
+            }
+        ]
+    }
+
+    result, created = _apply_layer_adjustments(nuke, source, layer, 0, matte_source=read)
+
+    matte.setInput.assert_called_once_with(0, read)
+    matte_knobs["cryptoLayer"].setValue.assert_called_once_with("CryptoMaterials")
+    matte_knobs["matteList"].setValue.assert_called_once_with("/mat/Card")
+    unpremult.setInput.assert_called_once_with(0, source)
+    unpremult_knobs["channels"].setValue.assert_called_once_with("rgb")
+    unpremult_knobs["alpha"].setValue.assert_called_once_with("rgba.alpha")
+    assert [call.args for call in matte_alpha.setInput.call_args_list] == [(0, matte), (1, unpremult)]
+    copy_knobs["from0"].setValue.assert_called_once_with("rgba.alpha")
+    copy_knobs["to0"].setValue.assert_called_once_with("rgba.alpha")
+    edge_blur.setInput.assert_called_once_with(0, matte_alpha)
+    edge_knobs["channels"].setValue.assert_called_once_with("rgba")
+    edge_knobs["size"].setValue.assert_called_once_with(2.5)
+    premult.setInput.assert_called_once_with(0, edge_blur)
+    premult_knobs["channels"].setValue.assert_called_once_with("rgb")
+    premult_knobs["alpha"].setValue.assert_called_once_with("rgba.alpha")
+    assert [call.args for call in keymix.setInput.call_args_list] == [(0, source), (1, premult), (2, edge_blur)]
+    keymix_knobs["maskChannel"].setValue.assert_called_once_with("rgba.alpha")
+    assert result is keymix
+    assert created == [
+        "Card_Edge_Crypto",
+        "Card_Edge_Unpremult",
+        "Card_Edge_Matte_Alpha",
+        "Card_Edge_EdgeBlur",
+        "Card_Edge_Premult",
+        "Card_Edge_Material_Keymix",
+    ]
+
+
 def test_multilayer_adjustments_preserve_declared_order():
     def node(name, *knob_names):
         value = MagicMock()
@@ -164,6 +338,51 @@ def test_multilayer_channel_requirements_and_write_options():
     compositing._set_write_options(write, {"output_colorspace": "sRGB", "output_datatype": "16 bit"})
     write.knobs.return_value["colorspace"].setValue.assert_called_once_with("sRGB")
     write.knobs.return_value["datatype"].setValue.assert_called_once_with("16 bit")
+
+
+@pytest.mark.parametrize("kind", ["material_saturation", "material_edge_blur"])
+def test_build_rejects_missing_cryptomatte_for_scoped_adjustments(tmp_path, kind):
+    def node(name, *knob_names):
+        value = MagicMock()
+        knobs = {knob_name: MagicMock() for knob_name in knob_names}
+        value.name.return_value = name
+        value.knobs.return_value = knobs
+        value.__getitem__.side_effect = knobs.__getitem__
+        return value
+
+    read = node("Read", "first", "last", "origfirst", "origlast")
+    read.channels.return_value = ["rgba.red"]
+    root = node("Root", "first_frame", "last_frame", "fps", "format")
+    nuke = MagicMock()
+    nuke.allNodes.return_value = []
+    nuke.root.return_value = root
+    nuke.nodes.Read.return_value = read
+    value = manifest(tmp_path)
+    value["layers"] = [
+        {
+            "path": str(tmp_path / "beauty.%04d.exr"),
+            "adjustments": [
+                {
+                    "kind": kind,
+                    "crypto_layer": "CryptoMaterials",
+                    "materials": ["/mat/Card"],
+                }
+            ],
+        }
+    ]
+
+    with pytest.raises(RuntimeError, match="CryptoMaterials"):
+        compositing.build_layered_comp(nuke, value)
+
+
+def test_material_adjustments_reserve_branch_rows_in_the_graph():
+    base = {"channel": None, "gain": 1.0, "blur_size": 0.0}
+
+    saturation = {**base, "adjustments": [{"kind": "material_saturation"}]}
+    edge_blur = {**base, "adjustments": [{"kind": "material_edge_blur"}]}
+
+    assert compositing._layer_row_count(saturation) == 2
+    assert compositing._layer_row_count(edge_blur) == 5
 
 
 @pytest.mark.parametrize("field", ["gain", "blur_size"])

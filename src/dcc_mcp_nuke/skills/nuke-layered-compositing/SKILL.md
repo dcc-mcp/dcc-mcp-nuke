@@ -19,7 +19,14 @@ metadata:
 
 Use `build_layered_comp` with layers ordered bottom-to-top, then render the
 returned Write node with `render_write_node`. For a multilayer EXR, reuse its
-path with a `channel` per pass and ordered `grade`, `material_gain`, or `blur`
-adjustments. Declare `required_layers` when missing AOVs must fail before save.
+path with a `channel` per pass and ordered `grade`, `material_gain`,
+`material_saturation`, `material_edge_blur`, or `blur` adjustments. Declare
+`required_layers` when missing AOVs must fail before save.
 Each new layer connects to Nuke input A and the accumulated composite to input
 B, so `minus` evaluates `A-B`.
+
+Use `material_gain` or `material_saturation` to change only materials selected
+from a declared Cryptomatte layer. Use `material_edge_blur` to unpremultiply the
+selected material, feather its alpha with EdgeBlur, premultiply it again, and
+key it over the untouched image. Material saturation and edge size must be
+non-negative.

@@ -5,7 +5,8 @@ from pathlib import Path
 from typing import Any, Mapping
 
 MERGE_OPERATIONS = {"over", "plus", "minus", "multiply", "screen", "max", "min"}
-ADJUSTMENT_KINDS = {"grade", "material_gain", "blur"}
+MATERIAL_ADJUSTMENT_ROWS = {"material_gain": 2, "material_saturation": 2, "material_edge_blur": 5}
+ADJUSTMENT_KINDS = {"grade", "blur", *MATERIAL_ADJUSTMENT_ROWS}
 NODE_COLUMN_SPACING = 320
 NODE_ROW_SPACING = 100
 MATTE_BRANCH_OFFSET = 140
@@ -126,7 +127,6 @@ def _normalize_adjustments(layer: Mapping[str, Any], layer_index: int) -> list[d
         else:
             crypto_layer = adjustment.get("crypto_layer")
             materials = adjustment.get("materials")
-            gain = float(adjustment.get("gain", 1.0))
             if not isinstance(crypto_layer, str) or not crypto_layer.strip():
                 raise ValueError(f"{label}.crypto_layer must be a non-empty string")
             if (
@@ -135,17 +135,28 @@ def _normalize_adjustments(layer: Mapping[str, Any], layer_index: int) -> list[d
                 or any(not isinstance(material, str) or not material.strip() for material in materials)
             ):
                 raise ValueError(f"{label}.materials must contain non-empty strings")
-            if gain < 0:
-                raise ValueError(f"{label}.gain must be non-negative")
-            normalized.append(
-                {
-                    "kind": kind,
-                    "name": name,
-                    "crypto_layer": crypto_layer,
-                    "materials": materials,
-                    "gain": gain,
-                }
-            )
+            normalized_adjustment = {
+                "kind": kind,
+                "name": name,
+                "crypto_layer": crypto_layer,
+                "materials": materials,
+            }
+            if kind == "material_gain":
+                gain = float(adjustment.get("gain", 1.0))
+                if gain < 0:
+                    raise ValueError(f"{label}.gain must be non-negative")
+                normalized_adjustment["gain"] = gain
+            elif kind == "material_saturation":
+                saturation = float(adjustment.get("saturation", 1.0))
+                if saturation < 0:
+                    raise ValueError(f"{label}.saturation must be non-negative")
+                normalized_adjustment["saturation"] = saturation
+            else:
+                size = float(adjustment.get("size", 0.0))
+                if size < 0:
+                    raise ValueError(f"{label}.size must be non-negative")
+                normalized_adjustment["size"] = size
+            normalized.append(normalized_adjustment)
     return normalized
 
 
@@ -182,7 +193,9 @@ def build_layered_comp(nuke: Any, manifest: Mapping[str, Any]) -> dict[str, Any]
         if layer["channel"]:
             requirements.append(layer["channel"])
         requirements.extend(
-            adjustment["crypto_layer"] for adjustment in layer["adjustments"] if adjustment["kind"] == "material_gain"
+            adjustment["crypto_layer"]
+            for adjustment in layer["adjustments"]
+            if adjustment["kind"] in MATERIAL_ADJUSTMENT_ROWS
         )
         if requirements:
             _require_layers(read, list(dict.fromkeys(requirements)))
@@ -314,27 +327,88 @@ def _apply_layer_adjustments(
                 matte["cryptoLayer"].setValue(operation["crypto_layer"])
                 matte["matteList"].setValue(", ".join(operation["materials"]))
 
-                attenuated = nuke.nodes.Grade()
-                attenuated.setName(f"{name}_Attenuated")
-                attenuated.setInput(0, current)
-                attenuated["multiply"].setValue(operation["gain"])
+                if operation["kind"] == "material_edge_blur":
+                    unpremult = nuke.nodes.Unpremult()
+                    unpremult.setName(f"{name}_Unpremult")
+                    unpremult.setInput(0, current)
+                    unpremult["channels"].setValue("rgb")
+                    unpremult["alpha"].setValue("rgba.alpha")
+
+                    matte_alpha = nuke.nodes.Copy()
+                    matte_alpha.setName(f"{name}_Matte_Alpha")
+                    matte_alpha.setInput(0, matte)
+                    matte_alpha.setInput(1, unpremult)
+                    matte_alpha["from0"].setValue("rgba.alpha")
+                    matte_alpha["to0"].setValue("rgba.alpha")
+
+                    edge_blur = nuke.nodes.EdgeBlur()
+                    edge_blur.setName(f"{name}_EdgeBlur")
+                    edge_blur.setInput(0, matte_alpha)
+                    edge_blur["channels"].setValue("rgba")
+                    edge_blur["size"].setValue(operation["size"])
+
+                    premult = nuke.nodes.Premult()
+                    premult.setName(f"{name}_Premult")
+                    premult.setInput(0, edge_blur)
+                    premult["channels"].setValue("rgb")
+                    premult["alpha"].setValue("rgba.alpha")
+
+                    keymix = nuke.nodes.Keymix()
+                    keymix.setName(f"{name}_Material_Keymix")
+                    keymix.setInput(0, current)
+                    keymix.setInput(1, premult)
+                    keymix.setInput(2, edge_blur)
+                    if "channels" in keymix.knobs():
+                        keymix["channels"].setValue("rgba")
+                    if "maskChannel" in keymix.knobs():
+                        keymix["maskChannel"].setValue("rgba.alpha")
+                    if layout_origin is not None:
+                        _set_node_position(unpremult, layout_x, layout_y)
+                        _set_node_position(matte, layout_x + MATTE_BRANCH_OFFSET, layout_y)
+                        _set_node_position(matte_alpha, layout_x, layout_y + NODE_ROW_SPACING)
+                        _set_node_position(edge_blur, layout_x, layout_y + 2 * NODE_ROW_SPACING)
+                        _set_node_position(premult, layout_x, layout_y + 3 * NODE_ROW_SPACING)
+                        _set_node_position(keymix, layout_x, layout_y + 4 * NODE_ROW_SPACING)
+                        layout_y += 5 * NODE_ROW_SPACING
+                    current = keymix
+                    created.extend(
+                        (
+                            matte.name(),
+                            unpremult.name(),
+                            matte_alpha.name(),
+                            edge_blur.name(),
+                            premult.name(),
+                            keymix.name(),
+                        )
+                    )
+                    continue
+
+                if operation["kind"] == "material_gain":
+                    adjusted = nuke.nodes.Grade()
+                    adjusted.setName(f"{name}_Attenuated")
+                    adjusted["multiply"].setValue(operation["gain"])
+                else:
+                    adjusted = nuke.nodes.Saturation()
+                    adjusted.setName(f"{name}_Saturated")
+                    adjusted["saturation"].setValue(operation["saturation"])
+                adjusted.setInput(0, current)
 
                 keymix = nuke.nodes.Keymix()
                 keymix.setName(f"{name}_Material_Keymix")
                 keymix.setInput(0, current)
-                keymix.setInput(1, attenuated)
+                keymix.setInput(1, adjusted)
                 keymix.setInput(2, matte)
                 if "channels" in keymix.knobs():
                     keymix["channels"].setValue("rgba")
                 if "maskChannel" in keymix.knobs():
                     keymix["maskChannel"].setValue("rgba.alpha")
                 if layout_origin is not None:
-                    _set_node_position(attenuated, layout_x, layout_y)
+                    _set_node_position(adjusted, layout_x, layout_y)
                     _set_node_position(matte, layout_x + MATTE_BRANCH_OFFSET, layout_y)
                     _set_node_position(keymix, layout_x, layout_y + NODE_ROW_SPACING)
                     layout_y += 2 * NODE_ROW_SPACING
                 current = keymix
-                created.extend((matte.name(), attenuated.name(), keymix.name()))
+                created.extend((matte.name(), adjusted.name(), keymix.name()))
         return current, created
 
     if layer["gain"] != 1.0:
@@ -395,7 +469,7 @@ def _connect_merge(merge: Any, background: Any, foreground: Any) -> None:
 def _layer_row_count(layer: Mapping[str, Any]) -> int:
     rows = 1 if layer["channel"] else 0
     if layer["adjustments"]:
-        return rows + sum(2 if operation["kind"] == "material_gain" else 1 for operation in layer["adjustments"])
+        return rows + sum(MATERIAL_ADJUSTMENT_ROWS.get(operation["kind"], 1) for operation in layer["adjustments"])
     return rows + int(layer["gain"] != 1.0) + int(layer["blur_size"] > 0.0)
 
 

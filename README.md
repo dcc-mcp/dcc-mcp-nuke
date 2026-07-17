@@ -20,3 +20,7 @@ published through `release.yaml` and the GitHub `pypi` environment.
 The `nuke-node-assets` skill packages reusable, versioned Gizmos with an
 explicit public knob interface, instantiates saved assets, and validates live
 instances.
+
+The `nuke-layered-compositing` skill supports ordered global and
+Cryptomatte-scoped gain, saturation, and edge-feather adjustments without
+changing pixels outside the selected material.
