@@ -4,6 +4,8 @@ from pathlib import Path
 
 from dcc_mcp_core.skill import skill_entry, skill_error, skill_success
 
+from dcc_mcp_nuke.gizmos import _publish_file, _temporary_path
+
 _IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 
 
@@ -97,14 +99,14 @@ def main(
         node.setSelected(False)
     group.setSelected(True)
     target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.with_name(".{}.dcc-mcp.tmp".format(target.name))
+    temporary = _temporary_path(target)
     temporary.unlink(missing_ok=True)
     try:
         nuke.nodeCopy(str(temporary))
         if not temporary.is_file():
             return skill_error("Failed to package Gizmo", "Nuke did not serialize the Group")
         _normalize_gizmo(temporary)
-        temporary.replace(target)
+        _publish_file(temporary, target, overwrite=overwrite)
     except (OSError, ValueError) as exc:
         return skill_error("Failed to package Gizmo", str(exc))
     finally:

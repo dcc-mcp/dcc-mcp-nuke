@@ -5,6 +5,7 @@ import json
 import math
 import os
 import re
+import uuid
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Mapping
 
@@ -201,6 +202,20 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _publish_file(source: Path, target: Path, *, overwrite: bool) -> None:
+    if overwrite:
+        os.replace(source, target)
+        return
+    try:
+        os.link(source, target)
+    except FileExistsError as exc:
+        raise FileExistsError(f"refusing to overwrite existing path: {target}") from exc
+
+
+def _temporary_path(target: Path) -> Path:
+    return target.with_name(f".{target.name}.{os.getpid()}.{uuid.uuid4().hex}.dcc-mcp.tmp")
+
+
 def _embedded_manifest(nuke: Any, manifest: Mapping[str, Any]) -> Any:
     knob = nuke.String_Knob("dcc_mcp_asset_manifest", "DCC MCP Asset Manifest")
     knob.setValue(json.dumps(dict(manifest), separators=(",", ":"), sort_keys=True))
@@ -253,7 +268,7 @@ def create_from_group(
             )
 
     target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.with_name(f".{target.name}.dcc-mcp.tmp")
+    temporary = _temporary_path(target)
     temporary.unlink(missing_ok=True)
     original_name = group.name()
     label_knob = group.knob("label")
@@ -262,6 +277,9 @@ def create_from_group(
     selected = {node: bool(node.knob("selected").value()) for node in top_nodes if node.knob("selected") is not None}
     added = []
     changed_targets = []
+    temporary_manifest = _temporary_path(manifest_path)
+    published_target = False
+    replace_existing = conflict_policy == "replace_same_version"
     try:
         group.setName(manifest["node_class"])
         if label_knob is not None:
@@ -290,13 +308,22 @@ def create_from_group(
         if forbidden:
             raise ValueError(f"forbidden callback/code found: {', '.join(forbidden)}")
         digest = _sha256(temporary)
-        temporary.replace(target)
+        _publish_file(temporary, target, overwrite=replace_existing)
+        published_target = True
         published = {**manifest, "sha256": digest, "gizmo_path": str(target)}
-        temporary_manifest = manifest_path.with_name(".manifest.json.dcc-mcp.tmp")
         temporary_manifest.write_text(json.dumps(published, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        temporary_manifest.replace(manifest_path)
+        _publish_file(temporary_manifest, manifest_path, overwrite=replace_existing)
+    except Exception:
+        if published_target and not replace_existing:
+            try:
+                if target.samefile(temporary):
+                    target.unlink()
+            except OSError:
+                pass
+        raise
     finally:
         temporary.unlink(missing_ok=True)
+        temporary_manifest.unlink(missing_ok=True)
         for knob in reversed(added):
             if hasattr(group, "removeKnob"):
                 group.removeKnob(knob)
