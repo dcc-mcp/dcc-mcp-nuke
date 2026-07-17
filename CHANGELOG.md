@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.9.0](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.8.0...v0.9.0) (2026-07-17)
+
+
+### Features
+
+* add reusable Nuke Gizmo assets ([#23](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/23)) ([ac8c341](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/ac8c34164b2a5bd5982f047d9f530b7bba0a9c13))
+
 ## [0.8.0](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.7.0...v0.8.0) (2026-07-17)
 
 
