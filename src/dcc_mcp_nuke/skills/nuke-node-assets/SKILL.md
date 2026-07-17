@@ -19,10 +19,16 @@ metadata:
 
 # Nuke Node Assets
 
-Use `package_gizmo` to collapse explicit nodes into a Group, expose selected
-internal knobs, and save a versioned `.gizmo`. Use `instantiate_gizmo` to load
-that asset and set its public knobs, then `inspect_gizmo` to verify its
-manifest, controls, children, and Nuke error state.
+Use `gizmo_create_from_group` for portable production assets. It publishes an
+existing Group under the isolated root configured by
+`DCC_MCP_NUKE_PLUGIN_ROOT`, with a stable dotted id, semantic version, typed
+bounded knobs, and ordered input contract. Executable callbacks are rejected.
+Use `gizmo_instantiate` by id/version and `gizmo_validate` for hash, dependency,
+clean-load, render, and channel-preservation evidence.
+
+The earlier path-based `package_gizmo`, `instantiate_gizmo`, and
+`inspect_gizmo` tools remain for compatibility. They do not provide the
+registered-asset security contract and should not be used for untrusted assets.
 
 Package a new version to a new filename. Instance-preserving graph upgrades are
 not part of this skill yet.
