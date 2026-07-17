@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.8.0](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.7.0...v0.8.0) (2026-07-17)
+
+
+### Features
+
+* add typed Nuke script loading ([#20](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/20)) ([0f26c51](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/0f26c513b1b2c5c24c733c682b7ddaaadb4744ac))
+* support subtractive layered composites ([#21](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/21)) ([3e4bb81](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/3e4bb8140758d3fa89dc5f045fa0ecb8114070bf))
+
 ## [0.7.0](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.6.0...v0.7.0) (2026-07-16)
 
 
