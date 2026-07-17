@@ -106,7 +106,6 @@ class FakeNuke:
 
     def nodeCopy(self, path):
         Path(path).write_text(self.serialized, encoding="utf-8")
-        return True
 
     def pluginAddPath(self, path):
         self.plugin_paths.append(path)

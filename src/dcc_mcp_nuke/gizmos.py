@@ -282,7 +282,8 @@ def create_from_group(
         for node in top_nodes:
             node.setSelected(False)
         group.setSelected(True)
-        if not nuke.nodeCopy(str(temporary)):
+        nuke.nodeCopy(str(temporary))
+        if not temporary.is_file():
             raise RuntimeError("Nuke did not serialize the Group")
         _normalize_gizmo(temporary)
         forbidden = _forbidden_code(temporary.read_text(encoding="utf-8"))

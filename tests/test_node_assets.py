@@ -100,7 +100,6 @@ def test_package_gizmo_groups_nodes_exposes_knobs_and_writes_versioned_asset(tmp
 
     def node_copy(path):
         Path(path).write_text("set cut_paste_input [stack 0]\nGroup {\n name SolarBloom\n}\n", encoding="utf-8")
-        return True
 
     nuke.nodeCopy = MagicMock(side_effect=node_copy)
     monkeypatch.setitem(sys.modules, "nuke", nuke)
