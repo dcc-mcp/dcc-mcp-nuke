@@ -48,12 +48,14 @@ tools:
                       type: object
                       required: [kind]
                       properties:
-                        kind: {type: string, enum: [grade, material_gain, material_saturation, material_edge_blur, blur]}
+                        kind: {type: string, enum: [grade, material_gain, material_saturation, material_edge_blur, material_albedo_fill, blur]}
                         name: {type: string, minLength: 1}
                         gain: {type: number, minimum: 0, default: 1}
                         gamma: {type: number, exclusiveMinimum: 0, default: 1}
                         saturation: {type: number, minimum: 0, default: 1, description: Saturation multiplier for material_saturation.}
                         size: {type: number, minimum: 0, default: 0, description: Blur radius for blur or material_edge_blur.}
+                        albedo_layer: {type: string, minLength: 1, default: albedo, description: Source albedo AOV for material_albedo_fill.}
+                        strength: {type: number, minimum: 0, maximum: 0.25, default: 0.1, description: Bounded creative albedo fill strength.}
                         crypto_layer: {type: string, minLength: 1}
                         materials:
                           type: array

@@ -5,7 +5,13 @@ from pathlib import Path
 from typing import Any, Mapping
 
 MERGE_OPERATIONS = {"over", "plus", "minus", "multiply", "screen", "max", "min"}
-MATERIAL_ADJUSTMENT_ROWS = {"material_gain": 2, "material_saturation": 2, "material_edge_blur": 5}
+MAX_MATERIAL_ALBEDO_FILL_STRENGTH = 0.25
+MATERIAL_ADJUSTMENT_ROWS = {
+    "material_gain": 2,
+    "material_saturation": 2,
+    "material_edge_blur": 5,
+    "material_albedo_fill": 4,
+}
 ADJUSTMENT_KINDS = {"grade", "blur", *MATERIAL_ADJUSTMENT_ROWS}
 NODE_COLUMN_SPACING = 320
 NODE_ROW_SPACING = 100
@@ -151,6 +157,14 @@ def _normalize_adjustments(layer: Mapping[str, Any], layer_index: int) -> list[d
                 if saturation < 0:
                     raise ValueError(f"{label}.saturation must be non-negative")
                 normalized_adjustment["saturation"] = saturation
+            elif kind == "material_albedo_fill":
+                albedo_layer = adjustment.get("albedo_layer", "albedo")
+                if not isinstance(albedo_layer, str) or not albedo_layer.strip():
+                    raise ValueError(f"{label}.albedo_layer must be a non-empty string")
+                strength = float(adjustment.get("strength", 0.1))
+                if not 0 <= strength <= MAX_MATERIAL_ALBEDO_FILL_STRENGTH:
+                    raise ValueError(f"{label}.strength must be between 0 and {MAX_MATERIAL_ALBEDO_FILL_STRENGTH}")
+                normalized_adjustment.update(albedo_layer=albedo_layer, strength=strength)
             else:
                 size = float(adjustment.get("size", 0.0))
                 if size < 0:
@@ -196,6 +210,11 @@ def build_layered_comp(nuke: Any, manifest: Mapping[str, Any]) -> dict[str, Any]
             adjustment["crypto_layer"]
             for adjustment in layer["adjustments"]
             if adjustment["kind"] in MATERIAL_ADJUSTMENT_ROWS
+        )
+        requirements.extend(
+            adjustment["albedo_layer"]
+            for adjustment in layer["adjustments"]
+            if adjustment["kind"] == "material_albedo_fill"
         )
         if requirements:
             _require_layers(read, list(dict.fromkeys(requirements)))
@@ -326,6 +345,49 @@ def _apply_layer_adjustments(
                 matte.setInput(0, matte_source if matte_source is not None else node)
                 matte["cryptoLayer"].setValue(operation["crypto_layer"])
                 matte["matteList"].setValue(", ".join(operation["materials"]))
+
+                if operation["kind"] == "material_albedo_fill":
+                    albedo = nuke.nodes.Shuffle()
+                    albedo.setName(f"{name}_Albedo")
+                    albedo.setInput(0, matte_source if matte_source is not None else node)
+                    input_knob = "in" if "in" in albedo.knobs() else "in1"
+                    albedo[input_knob].setValue(operation["albedo_layer"])
+
+                    bounded = nuke.nodes.Clamp()
+                    bounded.setName(f"{name}_Bounded_Albedo")
+                    bounded.setInput(0, albedo)
+                    bounded["channels"].setValue("rgb")
+                    bounded["minimum"].setValue(0.0)
+                    bounded["minimum_enable"].setValue(True)
+                    bounded["maximum"].setValue(1.0)
+                    bounded["maximum_enable"].setValue(True)
+
+                    fill = nuke.nodes.Grade()
+                    fill.setName(f"{name}_Creative_Fill")
+                    fill.setInput(0, bounded)
+                    fill["multiply"].setValue(operation["strength"])
+
+                    merge = nuke.nodes.Merge2()
+                    merge.setName(f"{name}_Material_Albedo_Fill")
+                    merge.setInput(0, current)
+                    merge.setInput(1, fill)
+                    merge.setInput(2, matte)
+                    merge["operation"].setValue("plus")
+                    for knob_name in ("Achannels", "Bchannels", "output"):
+                        if knob_name in merge.knobs():
+                            merge[knob_name].setValue("rgb")
+                    if "maskChannelInput" in merge.knobs():
+                        merge["maskChannelInput"].setValue("rgba.alpha")
+                    if layout_origin is not None:
+                        _set_node_position(albedo, layout_x + MATTE_BRANCH_OFFSET, layout_y)
+                        _set_node_position(matte, layout_x + 2 * MATTE_BRANCH_OFFSET, layout_y)
+                        _set_node_position(bounded, layout_x + MATTE_BRANCH_OFFSET, layout_y + NODE_ROW_SPACING)
+                        _set_node_position(fill, layout_x + MATTE_BRANCH_OFFSET, layout_y + 2 * NODE_ROW_SPACING)
+                        _set_node_position(merge, layout_x, layout_y + 3 * NODE_ROW_SPACING)
+                        layout_y += 4 * NODE_ROW_SPACING
+                    current = merge
+                    created.extend((matte.name(), albedo.name(), bounded.name(), fill.name(), merge.name()))
+                    continue
 
                 if operation["kind"] == "material_edge_blur":
                     unpremult = nuke.nodes.Unpremult()

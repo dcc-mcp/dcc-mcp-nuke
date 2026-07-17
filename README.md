@@ -22,5 +22,5 @@ explicit public knob interface, instantiates saved assets, and validates live
 instances.
 
 The `nuke-layered-compositing` skill supports ordered global and
-Cryptomatte-scoped gain, saturation, and edge-feather adjustments without
-changing pixels outside the selected material.
+Cryptomatte-scoped gain, saturation, edge-feather, and bounded albedo-fill
+adjustments without changing pixels outside the selected material.
