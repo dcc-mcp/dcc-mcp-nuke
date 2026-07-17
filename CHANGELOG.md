@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.10.0](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.9.0...v0.10.0) (2026-07-17)
+
+
+### Features
+
+* add Cryptomatte-scoped material adjustments ([#25](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/25)) ([a18707c](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/a18707cf8732e47c2e40b092d89a7ea91af3765e))
+
 ## [0.9.0](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.8.0...v0.9.0) (2026-07-17)
 
 
