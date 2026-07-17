@@ -171,7 +171,8 @@ def _normalize_gizmo(path: Path) -> None:
     normalized, count = re.subn(r"(?m)^(\s*)Group\s*\{", r"\1Gizmo {", text, count=1)
     if count != 1:
         raise ValueError("serialized Group header was not found")
-    path.write_text(normalized, encoding="utf-8", newline="")
+    with path.open("w", encoding="utf-8", newline="") as stream:
+        stream.write(normalized)
 
 
 def _forbidden_code(text: str) -> list[str]:
