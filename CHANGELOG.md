@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.12.1](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.12.0...v0.12.1) (2026-07-17)
+
+
+### Bug Fixes
+
+* align Gizmo packaging with Nuke knob and copy APIs ([#33](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/33)) ([fff4511](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/fff4511b7add5d645021d81fee00b291e315446b))
+
 ## [0.12.0](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.11.0...v0.12.0) (2026-07-17)
 
 
