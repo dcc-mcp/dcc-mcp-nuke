@@ -333,7 +333,12 @@ def test_read_nodes_use_manifest_frame_range():
     }
 
 
-def test_merge_connects_existing_comp_as_background_and_new_layer_as_foreground():
+def test_minus_connects_existing_comp_as_nuke_b_and_new_layer_as_nuke_a(tmp_path):
+    value = manifest(tmp_path)
+    value["layers"][1]["operation"] = "minus"
+
+    assert validate_manifest(value)["layers"][1]["operation"] == "minus"
+
     class Merge:
         def __init__(self):
             self.inputs = {}
@@ -342,9 +347,9 @@ def test_merge_connects_existing_comp_as_background_and_new_layer_as_foreground(
             self.inputs[index] = node
 
     merge = Merge()
-    _connect_merge(merge, background="beauty", foreground="information")
+    _connect_merge(merge, background="sharp_emission", foreground="blurred_emission")
 
-    assert merge.inputs == {0: "beauty", 1: "information"}
+    assert merge.inputs == {0: "sharp_emission", 1: "blurred_emission"}
 
 
 def test_script_save_is_non_interactive_and_idempotent():

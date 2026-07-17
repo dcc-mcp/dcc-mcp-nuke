@@ -21,3 +21,5 @@ Use `build_layered_comp` with layers ordered bottom-to-top, then render the
 returned Write node with `render_write_node`. For a multilayer EXR, reuse its
 path with a `channel` per pass and ordered `grade`, `material_gain`, or `blur`
 adjustments. Declare `required_layers` when missing AOVs must fail before save.
+Each new layer connects to Nuke input A and the accumulated composite to input
+B, so `minus` evaluates `A-B`.
