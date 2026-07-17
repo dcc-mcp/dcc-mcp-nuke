@@ -49,6 +49,11 @@ class FakeTimer:
         self.started = False
 
 
+class DeletedFakeTimer(FakeTimer):
+    def stop(self) -> None:
+        raise RuntimeError("Internal C++ object (PySide2.QtCore.QTimer) already deleted")
+
+
 class FakeNuke:
     def __init__(self) -> None:
         self.main_thread_calls = []
@@ -79,6 +84,18 @@ def test_dispatcher_exposes_and_pumps_core_host_queue(monkeypatch):
     assert not timer.started
     assert timer.timeout.callbacks == []
     assert host_dispatcher.shutdown_calls == 1
+
+
+def test_dispatcher_stop_tolerates_qt_teardown(monkeypatch):
+    host_dispatcher = FakeHostDispatcher()
+    dispatcher = NukeDispatcher(host_dispatcher=host_dispatcher)
+    monkeypatch.setattr(dispatcher, "_new_qt_timer", DeletedFakeTimer)
+
+    dispatcher.start()
+    dispatcher.stop()
+    dispatcher.stop()
+
+    assert host_dispatcher.shutdown_calls == 2
 
 
 def test_dispatcher_uses_nuke_main_thread_api_from_worker(monkeypatch):
