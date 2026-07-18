@@ -3,6 +3,18 @@
 Nuke adapter for the DCC Model Context Protocol. It embeds a Streamable HTTP
 MCP server in Nuke and uses Nuke's main-thread execution API for scene tools.
 
+## Automated Houdini AOV compositing
+
+![Automated Nuke node graph building Beauty, emission bloom, and volume layers from a Houdini render](docs/images/nuke-houdini-aov-compositing.gif)
+
+This real Nuke session shows `nuke-layered-compositing` progressively building
+a typed Beauty, emission-core, emission-bloom, volume, and output graph before
+rendering the result. The multilayer EXR source was rendered from a solar-system
+scene built in Houdini with
+[`dcc-mcp-houdini`](https://github.com/dcc-mcp/dcc-mcp-houdini); Nuke reads the
+Houdini Beauty, `all_emission`, and `all_volume` AOVs rather than bundled sample
+footage.
+
 ```bash
 python -m pip install dcc-mcp-nuke
 ```
