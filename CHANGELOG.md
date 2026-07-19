@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.13.2](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.13.1...v0.13.2) (2026-07-19)
+
+
+### Documentation
+
+* align agent workflow and branding ([195dfab](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/195dfab00e1a37d0ca7ddd3d28e00718c0ac21b3))
+* document CLI install and updates ([25ebcbf](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/25ebcbf36cac8727da13afc7620c3125d1f84ad6))
+* refresh Houdini AOV compositing showcase ([#44](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/44)) ([7060bbd](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/7060bbd9ed789a5991231a3b51231109f9bc5542))
+* showcase automated Houdini AOV compositing ([#41](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/41)) ([c50a98c](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/c50a98ce1e06e839746be82a5bf75ef66452bf79))
+
 ## [0.13.1](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.13.0...v0.13.1) (2026-07-17)
 
 
