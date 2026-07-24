@@ -23,6 +23,12 @@ class Menu:
     def addCommand(self, name, callback):
         self.items[name] = callback
 
+    def addSeparator(self):
+        # Separators don't have labels — record a sentinel so idempotency
+        # tests can still reason about item counts without knowing how
+        # many separators were added.
+        pass
+
 
 class Nuke:
     def __init__(self):
@@ -40,7 +46,16 @@ def test_install_menu_is_idempotent():
     install_menu(nuke)
 
     menu = nuke.root.items["DCC-MCP"]
-    assert set(menu.items) == {"Start Server", "Stop Server"}
+    expected = {
+        "OpenAPI Docs",
+        "Admin Panel",
+        "Copy Instance ID",
+        "Server Info",
+        "Start Server",
+        "Stop Server",
+        "About DCC MCP",
+    }
+    assert set(menu.items) == expected
 
 
 def test_menu_entry_only_runs_in_gui_hosts(monkeypatch):
