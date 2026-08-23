@@ -18,17 +18,20 @@ class NukeMcpServer(DccServerBase):
     def __init__(self, port: Optional[int] = None) -> None:
         self._host_dispatcher = NukeDispatcher()
         self._host_dispatcher.start()
+        execution_bridge = HostExecutionBridge(
+            dispatcher=self._host_dispatcher,
+            host_dispatcher=self._host_dispatcher.host_dispatcher,
+            default_thread_affinity="main",
+            script_materialization_policy="auto",
+        )
+        self._nuke_execution_bridge = execution_bridge
         options = DccServerOptions.from_env(
             "nuke",
             Path(__file__).resolve().parent / "skills",
             port=port,
             server_name=SERVER_NAME,
             server_version=__version__,
-            execution_bridge=HostExecutionBridge(
-                dispatcher=self._host_dispatcher,
-                host_dispatcher=self._host_dispatcher.host_dispatcher,
-                default_thread_affinity="main",
-            ),
+            execution_bridge=execution_bridge,
         )
         try:
             super().__init__(options=options)
@@ -71,3 +74,10 @@ def stop_server() -> None:
     if _server is not None:
         _server.stop()
         _server = None
+
+
+def current_execution_bridge() -> Optional[HostExecutionBridge]:
+    """Return the one live server bridge used by Nuke skill dispatch."""
+    if _server is None:
+        return None
+    return _server._nuke_execution_bridge

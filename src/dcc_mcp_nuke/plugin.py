@@ -231,8 +231,15 @@ def install_menu(nuke_module=None) -> None:
 
     # Track registered items to keep idempotency
     existing = set()
-    for name in ("OpenAPI Docs", "Admin Panel", "Copy Instance ID",
-                 "Server Info", "Start Server", "Stop Server", "About DCC MCP"):
+    for name in (
+        "OpenAPI Docs",
+        "Admin Panel",
+        "Copy Instance ID",
+        "Server Info",
+        "Start Server",
+        "Stop Server",
+        "About DCC MCP",
+    ):
         if menu.findItem(name) is not None:
             existing.add(name)
 
