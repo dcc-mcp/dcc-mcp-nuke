@@ -71,8 +71,10 @@ port. Use `dcc-mcp-cli list` or the stable gateway at
 Set `DCC_MCP_NUKE_PORT` only when a fixed direct port is required.
 
 The bundled `nuke-script` skill can open an existing absolute `.nk` path,
-inspect scripts and nodes, sample bounded per-channel AOV statistics, and
-explicitly save the current script. Releases are published through
+inspect bounded node topology and knob values, sample per-channel AOV
+statistics, and explicitly save the current script. The `nuke-node-graph`
+skill adds non-clearing node CRUD, exact input connections, and readback-
+verified static knob edits while rejecting executable knobs. Releases are published through
 `release.yaml` and the GitHub `pypi` environment.
 
 The `nuke-node-assets` skill packages reusable, versioned Gizmos with an
