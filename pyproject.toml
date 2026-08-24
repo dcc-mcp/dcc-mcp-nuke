@@ -10,8 +10,8 @@ authors = [{ name = "Long Hao", email = "hal.long@outlook.com" }]
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.9"
-dependencies = ["dcc-mcp-core>=0.19.45,<1.0.0"]
-classifiers = ["Development Status :: 3 - Alpha", "License :: OSI Approved :: MIT License", "Programming Language :: Python :: 3", "Programming Language :: Python :: 3.9", "Programming Language :: Python :: 3.10", "Programming Language :: Python :: 3.11", "Programming Language :: Python :: 3.12", "Topic :: Multimedia :: Graphics"]
+dependencies = ["dcc-mcp-core>=0.20.8,<1.0.0"]
+classifiers = ["Development Status :: 3 - Alpha", "License :: OSI Approved :: MIT License", "Programming Language :: Python :: 3", "Programming Language :: Python :: 3.9", "Programming Language :: Python :: 3.10", "Programming Language :: Python :: 3.11", "Programming Language :: Python :: 3.12", "Programming Language :: Python :: 3.13", "Topic :: Multimedia :: Graphics"]
 
 [project.optional-dependencies]
 dev = ["build", "pytest>=7", "ruff>=0.8", "twine", "pyyaml>=6"]
@@ -20,6 +20,9 @@ dev = ["build", "pytest>=7", "ruff>=0.8", "twine", "pyyaml>=6"]
 Homepage = "https://github.com/dcc-mcp/dcc-mcp-nuke"
 Repository = "https://github.com/dcc-mcp/dcc-mcp-nuke"
 Issues = "https://github.com/dcc-mcp/dcc-mcp-nuke/issues"
+
+[project.scripts]
+dcc-mcp-nuke = "dcc_mcp_nuke.install_cli:main"
 
 [project.entry-points."dcc_mcp.adapters"]
 nuke = "dcc_mcp_nuke:NukeMcpServer"

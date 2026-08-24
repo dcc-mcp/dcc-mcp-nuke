@@ -50,6 +50,9 @@ attach a stable session id with `--meta-json`, query `dcc-mcp-cli stats --range 
 Nuke adapter for the DCC Model Context Protocol. It embeds a Streamable HTTP
 MCP server in Nuke and uses Nuke's main-thread execution API for scene tools.
 
+See [install.md](install.md) for the agent-first install, verify, upgrade, and
+receipt-driven uninstall workflow on Windows, macOS, and Linux.
+
 ## Automated Houdini AOV compositing
 
 ![Automated Nuke AOV rebuild from a Houdini solar-system render](docs/images/nuke-houdini-aov-compositing.gif)
@@ -60,13 +63,8 @@ Emission passes, then merges them into the approved composite. The 35-layer,
 [`dcc-mcp-houdini`](https://github.com/dcc-mcp/dcc-mcp-houdini); Nuke reads the
 Houdini AOVs rather than bundled sample footage.
 
-```bash
-python -m pip install dcc-mcp-nuke
-```
-
-Add the installed package's `dcc_mcp_nuke/nuke_plugin` folder to `NUKE_PATH`.
-Nuke loads its `init.py` and asks the operating system for an available instance
-port. Use `dcc-mcp-cli list` or the stable gateway at
+Nuke loads the lifecycle-managed plug-in path and asks the operating system for
+an available instance port. Use `dcc-mcp-cli list` or the stable gateway at
 `http://127.0.0.1:9765/mcp` to discover and connect to the running instance.
 Set `DCC_MCP_NUKE_PORT` only when a fixed direct port is required.
 
