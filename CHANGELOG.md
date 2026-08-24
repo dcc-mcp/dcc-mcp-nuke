@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.14.0](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.13.2...v0.14.0) (2026-08-24)
+
+
+### Features
+
+* add bounded Nuke node graph CRUD ([082c408](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/082c40844e0283ea21781893e08731d2cfa6469e))
+* add Nuke install lifecycle ([ef2d076](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/ef2d0768e3ad29df192bc094a1c599c63bddff56))
+* add trusted Nuke scripting bridge ([69a431a](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/69a431a1f752ad37f00a89609103b13fb5fe0cce))
+
 ## [0.13.2](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.13.1...v0.13.2) (2026-07-19)
 
 
