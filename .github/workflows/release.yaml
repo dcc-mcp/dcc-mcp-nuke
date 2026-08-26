@@ -106,7 +106,8 @@ jobs:
       - name: Final source and artifact identity recheck
         run: >-
           python tools/release_integrity.py verify-bundle
-          --main-ref origin/main
+          --remote origin
+          --main-branch main
           --bundle "$RUNNER_TEMP/release-handoff/release-bundle.zip"
           --expected-bundle-sha256 "${{ needs.build.outputs.bundle_sha256 }}"
           --extract "$RUNNER_TEMP/verified-release"
