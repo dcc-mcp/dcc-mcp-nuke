@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from jsonschema import Draft202012Validator
 
 
 def test_install_defaults_to_a_non_mutating_agent_plan(tmp_path: Path) -> None:
@@ -43,6 +44,11 @@ def test_install_defaults_to_a_non_mutating_agent_plan(tmp_path: Path) -> None:
 
     assert completed.returncode == 0, completed.stderr
     result = json.loads(completed.stdout)
+    from dcc_mcp_core.deployment import load_install_sop_schema
+
+    validator = Draft202012Validator(load_install_sop_schema())
+    validator.check_schema(validator.schema)
+    validator.validate(result)
     assert result["schema_version"] == 1
     assert result["status"] == "planned"
     assert result["dcc_type"] == "nuke"
@@ -137,7 +143,72 @@ def test_distribution_exposes_the_standard_lifecycle_entry_point() -> None:
 
     assert "[project.scripts]" in pyproject
     assert 'dcc-mcp-nuke = "dcc_mcp_nuke.install_cli:main"' in pyproject
-    assert "dcc-mcp-core>=0.20.8,<1.0.0" in pyproject
+    assert "dcc-mcp-core>=0.20.14,<1.0.0" in pyproject
+
+
+def test_install_contract_uses_only_the_official_core_deployment_schema() -> None:
+    root = Path(__file__).resolve().parents[1]
+    package = root / "src" / "dcc_mcp_nuke"
+    installer = package.joinpath("_installer.py").read_text(encoding="utf-8")
+
+    assert not package.joinpath("_install_contract.py").exists()
+    assert "from dcc_mcp_core.deployment import (" in installer
+    assert "load_install_sop_schema" in installer
+    assert "_validate_core_install_contract()" in installer
+
+
+@pytest.mark.parametrize("schema_failure", ["missing", "malformed"])
+def test_install_contract_fails_closed_when_the_official_core_schema_is_unavailable(
+    tmp_path: Path,
+    schema_failure: str,
+) -> None:
+    fake_core = tmp_path / "dcc_mcp_core"
+    deployment = fake_core / "deployment"
+    deployment.mkdir(parents=True)
+    fake_core.joinpath("__init__.py").write_text(
+        "__version__ = '0.20.14'\n"
+        "inspect_install_root = probe_sidecar_tool = query_runtime_state = lambda *a, **k: {}\n"
+        "safe_remove_tree = safe_replace_tree = lambda *a, **k: {'success': True}\n",
+        encoding="utf-8",
+    )
+    if schema_failure == "missing":
+        deployment.joinpath("__init__.py").write_text(
+            "raise ImportError('official schema missing')\n", encoding="utf-8"
+        )
+        expected = "official schema missing"
+    else:
+        deployment.joinpath("__init__.py").write_text(
+            "INSTALL_EXIT_INSTALL = 30\n"
+            "INSTALL_EXIT_OK = 0\n"
+            "INSTALL_EXIT_PREFLIGHT = 10\n"
+            "INSTALL_EXIT_REQUIRES_RESTART = 50\n"
+            "INSTALL_EXIT_VERIFY = 40\n"
+            "INSTALL_SOP_SCHEMA_VERSION = 1\n"
+            "def load_install_sop_schema(): return {'type': 'array'}\n",
+            encoding="utf-8",
+        )
+        expected = "official Core Install SOP schema"
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join((str(tmp_path), str(Path(__file__).resolve().parents[1] / "src")))
+    package_root = Path(__file__).resolve().parents[1] / "src" / "dcc_mcp_nuke"
+    import_script = (
+        "import sys,types; "
+        "package=types.ModuleType('dcc_mcp_nuke'); "
+        f"package.__path__=[{str(package_root)!r}]; "
+        "sys.modules['dcc_mcp_nuke']=package; "
+        "import dcc_mcp_nuke._installer"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", import_script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert completed.returncode != 0
+    assert expected in completed.stderr
 
 
 def test_diagnostics_ping_is_typed_read_only_and_reports_host_readiness(

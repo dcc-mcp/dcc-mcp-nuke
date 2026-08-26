@@ -28,20 +28,21 @@ from dcc_mcp_core import (
     safe_remove_tree,
     safe_replace_tree,
 )
-
-from dcc_mcp_nuke.__version__ import __version__
-from dcc_mcp_nuke._install_contract import (
+from dcc_mcp_core.deployment import (
     INSTALL_EXIT_INSTALL,
     INSTALL_EXIT_OK,
     INSTALL_EXIT_PREFLIGHT,
     INSTALL_EXIT_REQUIRES_RESTART,
     INSTALL_EXIT_VERIFY,
     INSTALL_SOP_SCHEMA_VERSION,
+    load_install_sop_schema,
 )
+
+from dcc_mcp_nuke.__version__ import __version__
 
 DCC_TYPE = "nuke"
 COMMAND = "dcc-mcp-nuke"
-MIN_CORE_VERSION = "0.20.8"
+MIN_CORE_VERSION = "0.20.14"
 MIN_NUKE_VERSION = (14, 0)
 _PROFILE_ENV = "DCC_MCP_NUKE_PROFILE"
 _PYTHON_ENV = "DCC_MCP_INSTALL_PYTHON"
@@ -51,6 +52,32 @@ _MANAGED_END = "# DCC-MCP NUKE MANAGED END"
 _READINESS_TOOL = "nuke_diagnostics__ping"
 _HOST_VERSION = re.compile(r"Nuke\s*(?P<major>\d+)\.(?P<minor>\d+)(?:v(?P<release>\d+))?", re.IGNORECASE)
 _OFFICIAL_PYTHON_BY_NUKE_MAJOR = {14: (3, 9), 15: (3, 10), 16: (3, 11), 17: (3, 13)}
+
+
+def _validate_core_install_contract() -> dict[str, Any]:
+    schema = load_install_sop_schema()
+    required = {
+        "schema_version",
+        "status",
+        "dcc_type",
+        "adapter_version",
+        "core_version",
+        "steps",
+        "next_steps",
+        "receipt_path",
+        "verify",
+    }
+    if (
+        not isinstance(schema, dict)
+        or schema.get("type") != "object"
+        or schema.get("properties", {}).get("schema_version", {}).get("const") != INSTALL_SOP_SCHEMA_VERSION
+        or not required.issubset(set(schema.get("required", [])))
+    ):
+        raise RuntimeError("The official Core Install SOP schema is unavailable or incompatible.")
+    return schema
+
+
+_validate_core_install_contract()
 
 
 @dataclass(frozen=True)

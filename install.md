@@ -9,7 +9,8 @@ Foundry Nuke. The adapter follows the
 - **Nuke:** Nuke, NukeX, or Nuke Studio 14.0 or newer.
 - **Python:** the interpreter that matches the selected Nuke installation; an
   unrelated system Python cannot make the package importable inside Nuke.
-- **dcc-mcp-core:** `>=0.20.8,<1.0.0` in that same interpreter.
+- **dcc-mcp-core:** `>=0.20.14,<1.0.0` in that same interpreter. This is the
+  first release that owns the adapter Install SOP schema and deployment API.
 - **Platforms:** Windows, macOS, and Linux. Nuke's own qualified operating
   systems and licensing requirements still apply.
 - **Permissions:** write access to the selected Nuke plug-in profile, normally
@@ -19,7 +20,7 @@ Install the wheel with the exact target interpreter before running the
 lifecycle command:
 
 ```text
-<nuke-python> -m pip install "dcc-mcp-nuke==0.13.2"
+<nuke-python> -m pip install --upgrade "dcc-mcp-nuke"
 ```
 
 On macOS, Foundry ships Nuke's Python application inside the Nuke app bundle.
@@ -31,10 +32,10 @@ Nuke installation. Do not fall back to whichever `python` happens to be on
 
 | Nuke | Embedded Python line | Adapter | dcc-mcp-core | Platforms |
 |---|---|---|---|---|
-| Nuke 14.x | Python 3.9 | 0.13.2+ | 0.20.8+ | Windows/macOS/Linux |
-| Nuke 15.x | Python 3.10 | 0.13.2+ | 0.20.8+ | Windows/macOS/Linux |
-| Nuke 16.x | Python 3.11 | 0.13.2+ | 0.20.8+ | Windows/macOS/Linux |
-| Nuke 17.x | Python 3.13 | 0.13.2+ | 0.20.8+ | Windows/macOS/Linux |
+| Nuke 14.x | Python 3.9 | 0.14.1+ | 0.20.14+ | Windows/macOS/Linux |
+| Nuke 15.x | Python 3.10 | 0.14.1+ | 0.20.14+ | Windows/macOS/Linux |
+| Nuke 16.x | Python 3.11 | 0.14.1+ | 0.20.14+ | Windows/macOS/Linux |
+| Nuke 17.x | Python 3.13 | 0.14.1+ | 0.20.14+ | Windows/macOS/Linux |
 
 The installer checks the selected Nuke version, target interpreter, adapter
 version, Core floor, `NUKE_PATH`, profile, existing receipt, and partial state
