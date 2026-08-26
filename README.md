@@ -72,8 +72,10 @@ The bundled `nuke-script` skill can open an existing absolute `.nk` path,
 inspect bounded node topology and knob values, sample per-channel AOV
 statistics, and explicitly save the current script. The `nuke-node-graph`
 skill adds non-clearing node CRUD, exact input connections, and readback-
-verified static knob edits while rejecting executable knobs. Releases are published through
-`release.yaml` and the GitHub `pypi` environment.
+verified static knob edits while rejecting executable knobs. Releases use a
+canonical tag and exact-main identity check, one digest-bound wheel/sdist
+bundle, and a minimal-OIDC publisher in `release.yaml` and the GitHub `pypi`
+environment.
 
 The `nuke-node-assets` skill packages reusable, versioned Gizmos with an
 explicit public knob interface, instantiates saved assets, and validates live

@@ -30,3 +30,9 @@ def test_bundled_contract_files_exist():
         gizmo_scripts.joinpath(name).exists()
         for name in ("gizmo_create_from_group.py", "gizmo_instantiate.py", "gizmo_validate.py")
     )
+
+
+def test_compatibility_install_contract_is_not_packaged():
+    package = ROOT / "src" / "dcc_mcp_nuke"
+
+    assert not package.joinpath("_install_contract.py").exists()
