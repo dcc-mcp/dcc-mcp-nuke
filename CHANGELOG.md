@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.14.1](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.14.0...v0.14.1) (2026-08-26)
+
+
+### Bug Fixes
+
+* close release verification gaps ([71fba87](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/71fba8703b5dc7138d2824b49dfcfdbfe8cf38d1))
+* harden release integrity ([57307be](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/57307beb3598e4bb5354e6125366222929a7e855))
+* isolate authoritative release refs ([18d9af6](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/18d9af60979282f18917633e5d78cbda4d1e3b32))
+
 ## [0.14.0](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.13.2...v0.14.0) (2026-08-24)
 
 
