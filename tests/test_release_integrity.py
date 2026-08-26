@@ -159,8 +159,16 @@ def test_final_recheck_refreshes_remote_main_and_tag_before_publish(tmp_path: Pa
     _git(tmp_path, "clone", str(remote), str(checkout))
     _git(checkout, "checkout", "--detach", first_commit)
     identity = release.resolve_release_identity(checkout, "v1.2.3", "origin/main")
+    _git(checkout, "fetch", "origin", "main")
+    fetch_head_path = checkout / _git(checkout, "rev-parse", "--git-path", "FETCH_HEAD")
+    protected_refs = {
+        "head": _git(checkout, "rev-parse", "HEAD"),
+        "tag": _git(checkout, "rev-parse", "refs/tags/v1.2.3"),
+        "origin_main": _git(checkout, "rev-parse", "refs/remotes/origin/main"),
+        "fetch_head": fetch_head_path.read_bytes(),
+    }
 
-    _commit(source, "1.2.4", "move authoritative release refs")
+    second_commit = _commit(source, "1.2.4", "move authoritative release refs")
     _git(source, "tag", "--force", "v1.2.3")
     _git(source, "push", "origin", "main", "+refs/tags/v1.2.3:refs/tags/v1.2.3")
 
@@ -168,6 +176,12 @@ def test_final_recheck_refreshes_remote_main_and_tag_before_publish(tmp_path: Pa
     release.verify_release_identity(checkout, identity, "origin/main")
     with pytest.raises(release.ReleaseIntegrityError, match="tag object changed"):
         release.verify_authoritative_release_identity(checkout, identity, "origin", "main")
+    assert _git(checkout, "rev-parse", "HEAD") == protected_refs["head"]
+    assert _git(checkout, "rev-parse", "refs/tags/v1.2.3") == protected_refs["tag"]
+    assert _git(checkout, "rev-parse", "refs/remotes/origin/main") == protected_refs["origin_main"]
+    assert fetch_head_path.read_bytes() == protected_refs["fetch_head"]
+    assert _git(checkout, "rev-parse", "refs/dcc-mcp-release-integrity/main") == second_commit
+    assert _git(checkout, "rev-parse", "refs/dcc-mcp-release-integrity/tags/v1.2.3") == second_commit
 
 
 def test_release_bundle_round_trip_is_digest_bound_and_rejects_tampering(tmp_path: Path) -> None:

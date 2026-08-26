@@ -203,6 +203,7 @@ def _refresh_authoritative_release_refs(
         "--no-tags",
         "--force",
         "--no-write-fetch-head",
+        "--refmap=",
         remote,
         f"+refs/heads/{main_branch}:{main_ref}",
         f"+refs/tags/{tag}:{tag_ref}",
