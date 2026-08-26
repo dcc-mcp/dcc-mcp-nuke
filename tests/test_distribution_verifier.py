@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import builtins
 import importlib.util
 import io
+import json
+import subprocess
 import sys
 import tarfile
+import types
 import zipfile
 from pathlib import Path
 
@@ -55,3 +59,100 @@ def test_ci_runs_the_minimum_core_installed_wheel_contract_smoke() -> None:
 
     assert "Verify wheel and sdist with minimum Core" in workflow
     assert "python tools/verify_distribution.py dist --core-version 0.20.14" in workflow
+
+
+def _valid_core_probe(arguments: list[str]) -> subprocess.CompletedProcess[str]:
+    payload = {
+        "core_version": "0.20.14",
+        "install_sop_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+        },
+    }
+    return subprocess.CompletedProcess(arguments, 0, json.dumps(payload), "")
+
+
+def test_core_schema_probe_uses_the_isolated_python_when_ambient_core_is_absent(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    verifier = _verifier_module()
+    isolated_python = tmp_path / "isolated-python"
+    real_import = builtins.__import__
+
+    def reject_ambient_core(name, *args, **kwargs):
+        if name == "dcc_mcp_core" or name.startswith("dcc_mcp_core."):
+            raise ModuleNotFoundError("ambient Core is intentionally absent")
+        return real_import(name, *args, **kwargs)
+
+    def run(arguments, **kwargs):
+        assert Path(arguments[0]) == isolated_python
+        assert arguments[1] == "-c"
+        return _valid_core_probe(arguments)
+
+    monkeypatch.setattr(builtins, "__import__", reject_ambient_core)
+    monkeypatch.setattr(verifier.subprocess, "run", run)
+
+    schema = verifier._load_isolated_core_contract(isolated_python, "0.20.14")
+
+    assert schema["type"] == "object"
+
+
+def test_core_schema_probe_ignores_a_different_ambient_core(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    verifier = _verifier_module()
+    ambient_core = types.ModuleType("dcc_mcp_core")
+    ambient_core.__version__ = "9.9.9"
+    ambient_deployment = types.ModuleType("dcc_mcp_core.deployment")
+    ambient_deployment.load_install_sop_schema = lambda: {"type": 42}
+    monkeypatch.setitem(sys.modules, "dcc_mcp_core", ambient_core)
+    monkeypatch.setitem(sys.modules, "dcc_mcp_core.deployment", ambient_deployment)
+    monkeypatch.setattr(verifier.subprocess, "run", lambda arguments, **kwargs: _valid_core_probe(arguments))
+
+    schema = verifier._load_isolated_core_contract(tmp_path / "isolated-python", "0.20.14")
+
+    assert schema["type"] == "object"
+
+
+@pytest.mark.parametrize(
+    ("completed", "message"),
+    [
+        (subprocess.CompletedProcess([], 1, "", "missing deployment module"), "probe failed"),
+        (subprocess.CompletedProcess([], 0, "{", ""), "malformed JSON"),
+        (
+            subprocess.CompletedProcess([], 0, json.dumps({"core_version": "0.20.14"}), ""),
+            "invalid fields",
+        ),
+        (
+            subprocess.CompletedProcess(
+                [],
+                0,
+                json.dumps({"core_version": "0.20.20", "install_sop_schema": {"type": "object"}}),
+                "",
+            ),
+            "loaded Core 0.20.20",
+        ),
+        (
+            subprocess.CompletedProcess(
+                [],
+                0,
+                json.dumps({"core_version": "0.20.14", "install_sop_schema": {"type": 42}}),
+                "",
+            ),
+            "schema is invalid",
+        ),
+    ],
+)
+def test_core_schema_probe_wraps_import_version_and_schema_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    completed: subprocess.CompletedProcess[str],
+    message: str,
+) -> None:
+    verifier = _verifier_module()
+    monkeypatch.setattr(verifier.subprocess, "run", lambda arguments, **kwargs: completed)
+
+    with pytest.raises(verifier.DistributionContractError, match=message):
+        verifier._load_isolated_core_contract(tmp_path / "isolated-python", "0.20.14")

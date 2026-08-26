@@ -75,7 +75,11 @@ skill adds non-clearing node CRUD, exact input connections, and readback-
 verified static knob edits while rejecting executable knobs. Releases use a
 canonical tag and exact-main identity check, one digest-bound wheel/sdist
 bundle, and a minimal-OIDC publisher in `release.yaml` and the GitHub `pypi`
-environment.
+environment. Immediately before publishing, the workflow force-refreshes
+authoritative main and tag refs into an isolated namespace and repeats the
+identity checks. CI obtains the Install SOP schema from the isolated minimum-
+Core environment used for the installed-wheel smoke rather than its ambient
+interpreter.
 
 The `nuke-node-assets` skill packages reusable, versioned Gizmos with an
 explicit public knob interface, instantiates saved assets, and validates live

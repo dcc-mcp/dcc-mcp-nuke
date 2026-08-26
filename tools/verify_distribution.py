@@ -17,7 +17,20 @@ from pathlib import Path, PurePosixPath
 from typing import Optional, Sequence
 
 from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError, ValidationError
 from packaging.requirements import Requirement
+
+_CORE_CONTRACT_PROBE = """
+import json
+
+import dcc_mcp_core
+from dcc_mcp_core.deployment import load_install_sop_schema
+
+print(json.dumps({
+    "core_version": dcc_mcp_core.__version__,
+    "install_sop_schema": load_install_sop_schema(),
+}, sort_keys=True))
+"""
 
 
 class DistributionContractError(RuntimeError):
@@ -80,10 +93,41 @@ def _venv_python(environment: Path) -> Path:
     return environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 
 
+def _load_isolated_core_contract(python: Path, core_version: str) -> dict[str, object]:
+    """Serialize the version and Install SOP schema from the exact isolated Core."""
+    try:
+        completed = subprocess.run(
+            [str(python), "-c", _CORE_CONTRACT_PROBE],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise DistributionContractError("isolated Core contract probe failed") from exc
+    if completed.returncode != 0:
+        raise DistributionContractError("isolated Core contract probe failed")
+    try:
+        payload = json.loads(completed.stdout)
+    except (TypeError, ValueError) as exc:
+        raise DistributionContractError("isolated Core contract probe returned malformed JSON") from exc
+    if not isinstance(payload, dict) or set(payload) != {"core_version", "install_sop_schema"}:
+        raise DistributionContractError("isolated Core contract probe returned invalid fields")
+    actual_version = payload["core_version"]
+    if actual_version != core_version:
+        raise DistributionContractError(f"isolated environment loaded Core {actual_version}, expected {core_version}")
+    schema = payload["install_sop_schema"]
+    if not isinstance(schema, dict):
+        raise DistributionContractError("isolated Core Install SOP schema is invalid")
+    try:
+        Draft202012Validator.check_schema(schema)
+    except SchemaError as exc:
+        raise DistributionContractError("isolated Core Install SOP schema is invalid") from exc
+    return schema
+
+
 def installed_wheel_smoke(wheel: Path, core_version: str) -> None:
     """Install the wheel with the released Core floor and validate a synthetic plan."""
-    from dcc_mcp_core.deployment import load_install_sop_schema
-
     with tempfile.TemporaryDirectory(prefix="dcc-mcp-nuke-wheel-") as temporary:
         root = Path(temporary)
         environment = root / "venv"
@@ -104,15 +148,7 @@ def installed_wheel_smoke(wheel: Path, core_version: str) -> None:
                 detail = (completed.stderr or completed.stdout).strip()
                 raise DistributionContractError(f"isolated install failed: {detail}")
 
-        version = subprocess.run(
-            [str(python), "-c", "import dcc_mcp_core; print(dcc_mcp_core.__version__)"],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        ).stdout.strip()
-        if version != core_version:
-            raise DistributionContractError(f"isolated environment loaded Core {version}, expected {core_version}")
+        install_sop_schema = _load_isolated_core_contract(python, core_version)
 
         host_dir = root / "Nuke16.0v9"
         python_version = subprocess.run(
@@ -160,8 +196,13 @@ def installed_wheel_smoke(wheel: Path, core_version: str) -> None:
             result = json.loads(completed.stdout)
         except ValueError as exc:
             raise DistributionContractError("installed-wheel lifecycle output is not JSON") from exc
-        validator = Draft202012Validator(load_install_sop_schema())
-        validator.validate(result)
+        validator = Draft202012Validator(install_sop_schema)
+        try:
+            validator.validate(result)
+        except ValidationError as exc:
+            raise DistributionContractError(
+                "installed-wheel lifecycle output violates the isolated Core schema"
+            ) from exc
         if result.get("status") != "planned" or result.get("core_version") != core_version:
             raise DistributionContractError("installed wheel did not use the released Core floor for its plan")
         if profile.exists():

@@ -145,6 +145,31 @@ def test_final_recheck_rejects_a_moved_tag_wrong_head_or_changed_version(tmp_pat
         release.verify_release_identity(repository, identity, "main")
 
 
+def test_final_recheck_refreshes_remote_main_and_tag_before_publish(tmp_path: Path) -> None:
+    release = _release_module()
+    source, first_commit = _repository(tmp_path)
+    _git(source, "tag", "v1.2.3")
+    remote = tmp_path / "remote.git"
+    _git(tmp_path, "init", "--bare", str(remote))
+    _git(remote, "symbolic-ref", "HEAD", "refs/heads/main")
+    _git(source, "remote", "add", "origin", str(remote))
+    _git(source, "push", "origin", "main", "refs/tags/v1.2.3")
+
+    checkout = tmp_path / "checkout"
+    _git(tmp_path, "clone", str(remote), str(checkout))
+    _git(checkout, "checkout", "--detach", first_commit)
+    identity = release.resolve_release_identity(checkout, "v1.2.3", "origin/main")
+
+    _commit(source, "1.2.4", "move authoritative release refs")
+    _git(source, "tag", "--force", "v1.2.3")
+    _git(source, "push", "origin", "main", "+refs/tags/v1.2.3:refs/tags/v1.2.3")
+
+    # The checkout's stale remote-tracking and tag refs still accept the old identity.
+    release.verify_release_identity(checkout, identity, "origin/main")
+    with pytest.raises(release.ReleaseIntegrityError, match="tag object changed"):
+        release.verify_authoritative_release_identity(checkout, identity, "origin", "main")
+
+
 def test_release_bundle_round_trip_is_digest_bound_and_rejects_tampering(tmp_path: Path) -> None:
     release = _release_module()
     dist = tmp_path / "dist"
@@ -279,8 +304,10 @@ def test_release_workflow_is_sha_pinned_least_privilege_and_digest_bound() -> No
         "python",
         "tools/release_integrity.py",
         "verify-bundle",
-        "--main-ref",
-        "origin/main",
+        "--remote",
+        "origin",
+        "--main-branch",
+        "main",
         "--bundle",
         "$RUNNER_TEMP/release-handoff/release-bundle.zip",
         "--expected-bundle-sha256",

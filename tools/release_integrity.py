@@ -152,12 +152,17 @@ def resolve_release_identity(repository: Path, tag: str, main_ref: str) -> dict[
     }
 
 
-def verify_release_identity(repository: Path, identity: Mapping[str, Any], main_ref: str) -> None:
+def verify_release_identity(
+    repository: Path,
+    identity: Mapping[str, Any],
+    main_ref: str,
+    tag_ref: Optional[str] = None,
+) -> None:
     """Recheck tag object, peeled commit, HEAD, ancestry, and version."""
     repository = repository.resolve()
     _assert_clean_checkout(repository)
     expected = _require_identity(identity)
-    tag_ref = f"refs/tags/{expected['tag']}"
+    tag_ref = tag_ref or f"refs/tags/{expected['tag']}"
     tag_object = _run_git(repository, "rev-parse", "--verify", tag_ref).stdout.strip()
     if tag_object != expected["tag_object"]:
         raise ReleaseIntegrityError("Release tag object changed after the immutable build")
@@ -174,6 +179,52 @@ def verify_release_identity(repository: Path, identity: Mapping[str, Any], main_
     worktree = _project_metadata((repository / "pyproject.toml").read_text(encoding="utf-8"))
     if worktree != committed:
         raise ReleaseIntegrityError("Release worktree version or project name changed after checkout")
+
+
+def _refresh_authoritative_release_refs(
+    repository: Path,
+    tag: str,
+    remote: str,
+    main_branch: str,
+) -> tuple[str, str]:
+    """Fetch authoritative refs into an isolated namespace without touching user refs."""
+    _canonical_version(tag)
+    if not remote or remote.startswith("-"):
+        raise ReleaseIntegrityError("Release remote name is invalid")
+    branch_check = _run_git(repository, "check-ref-format", "--branch", main_branch, check=False)
+    if branch_check.returncode != 0:
+        raise ReleaseIntegrityError("Release main branch name is invalid")
+    namespace = "refs/dcc-mcp-release-integrity"
+    main_ref = f"{namespace}/main"
+    tag_ref = f"{namespace}/tags/{tag}"
+    _run_git(
+        repository,
+        "fetch",
+        "--no-tags",
+        "--force",
+        "--no-write-fetch-head",
+        remote,
+        f"+refs/heads/{main_branch}:{main_ref}",
+        f"+refs/tags/{tag}:{tag_ref}",
+    )
+    return main_ref, tag_ref
+
+
+def verify_authoritative_release_identity(
+    repository: Path,
+    identity: Mapping[str, Any],
+    remote: str,
+    main_branch: str,
+) -> None:
+    """Refresh remote main/tag into isolated refs, then recheck the release identity."""
+    expected = _require_identity(identity)
+    main_ref, tag_ref = _refresh_authoritative_release_refs(
+        repository.resolve(),
+        expected["tag"],
+        remote,
+        main_branch,
+    )
+    verify_release_identity(repository, expected, main_ref, tag_ref)
 
 
 def _distribution_files(dist_dir: Path, identity: Mapping[str, Any]) -> list[Path]:
@@ -320,7 +371,8 @@ def _parser() -> argparse.ArgumentParser:
 
     verify = subparsers.add_parser("verify-bundle")
     verify.add_argument("--repository", type=Path, default=Path.cwd())
-    verify.add_argument("--main-ref", default="origin/main")
+    verify.add_argument("--remote", default="origin")
+    verify.add_argument("--main-branch", default="main")
     verify.add_argument("--bundle", type=Path, required=True)
     verify.add_argument("--expected-bundle-sha256", required=True)
     verify.add_argument("--extract", type=Path, required=True)
@@ -342,7 +394,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             _append_outputs(args.github_output, {"bundle_sha256": digest})
         else:
             verified = verify_release_bundle(args.bundle, args.expected_bundle_sha256, args.extract)
-            verify_release_identity(args.repository, verified["identity"], args.main_ref)
+            verify_authoritative_release_identity(
+                args.repository,
+                verified["identity"],
+                args.remote,
+                args.main_branch,
+            )
     except (OSError, ReleaseIntegrityError, zipfile.BadZipFile) as exc:
         print(f"release integrity check failed: {exc}", file=sys.stderr)
         return 1
