@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import shlex
 import subprocess
 import sys
 import zipfile
@@ -194,6 +195,102 @@ def test_release_workflow_is_sha_pinned_least_privilege_and_digest_bound() -> No
     assert jobs["publish"]["permissions"] == {"contents": "read", "id-token": "write"}
     assert "id-token" not in jobs["build"]["permissions"]
 
+    def named_step(job: dict[str, object], name: str) -> dict[str, object]:
+        return next(step for step in job["steps"] if step.get("name") == name)
+
+    def command(job: dict[str, object], name: str) -> list[str]:
+        return shlex.split(str(named_step(job, name)["run"]), posix=True)
+
+    build = jobs["build"]
+    publish = jobs["publish"]
+    assert build["needs"] == "release-please"
+    assert build["if"] == "needs.release-please.outputs.release_created == 'true'"
+    assert build["outputs"] == {
+        "artifact_id": "${{ steps.upload.outputs.artifact-id }}",
+        "bundle_sha256": "${{ steps.bundle.outputs.bundle_sha256 }}",
+        "release_commit": "${{ steps.resolve.outputs.commit }}",
+    }
+    build_checkout = next(step for step in build["steps"] if str(step.get("uses", "")).startswith("actions/checkout@"))
+    assert build_checkout["with"] == {
+        "ref": "${{ needs.release-please.outputs.tag_name }}",
+        "fetch-depth": 0,
+        "persist-credentials": False,
+    }
+    assert named_step(build, "Resolve immutable release identity")["env"] == {
+        "RELEASE_TAG": "${{ needs.release-please.outputs.tag_name }}"
+    }
+    assert command(build, "Resolve immutable release identity") == [
+        "python",
+        "tools/release_integrity.py",
+        "resolve",
+        "--tag",
+        "$RELEASE_TAG",
+        "--main-ref",
+        "origin/main",
+        "--identity",
+        "$RUNNER_TEMP/release-identity.json",
+        "--github-output",
+        "$GITHUB_OUTPUT",
+    ]
+    assert command(build, "Install hash-pinned build inputs") == [
+        "python",
+        "-m",
+        "pip",
+        "install",
+        "--disable-pip-version-check",
+        "--only-binary=:all:",
+        "--require-hashes",
+        "-r",
+        ".github/release-requirements.txt",
+    ]
+    assert command(build, "Build wheel and source archive") == ["python", "-m", "build", "--no-isolation"]
+    assert command(build, "Create digest-bound release bundle") == [
+        "python",
+        "tools/release_integrity.py",
+        "create-bundle",
+        "--dist",
+        "dist",
+        "--identity",
+        "$RUNNER_TEMP/release-identity.json",
+        "--bundle",
+        "$RUNNER_TEMP/release-bundle.zip",
+        "--github-output",
+        "$GITHUB_OUTPUT",
+    ]
+    upload = named_step(build, "Upload one immutable handoff")
+    assert upload["id"] == "upload"
+    assert upload["with"]["path"] == "${{ runner.temp }}/release-bundle.zip"
+
+    assert set(publish["needs"]) == {"release-please", "build"}
+    publish_checkout = next(
+        step for step in publish["steps"] if str(step.get("uses", "")).startswith("actions/checkout@")
+    )
+    assert publish_checkout["with"] == {
+        "ref": "${{ needs.build.outputs.release_commit }}",
+        "fetch-depth": 0,
+        "persist-credentials": False,
+    }
+    download = named_step(publish, "Download the exact build artifact")
+    assert download["with"] == {
+        "artifact-ids": "${{ needs.build.outputs.artifact_id }}",
+        "path": "${{ runner.temp }}/release-handoff",
+    }
+    assert command(publish, "Final source and artifact identity recheck") == [
+        "python",
+        "tools/release_integrity.py",
+        "verify-bundle",
+        "--main-ref",
+        "origin/main",
+        "--bundle",
+        "$RUNNER_TEMP/release-handoff/release-bundle.zip",
+        "--expected-bundle-sha256",
+        "${{ needs.build.outputs.bundle_sha256 }}",
+        "--extract",
+        "$RUNNER_TEMP/verified-release",
+    ]
+    publisher = named_step(publish, "Publish verified distributions")
+    assert publisher["with"]["packages-dir"] == "${{ runner.temp }}/verified-release/dist"
+
     action_uses = []
     for checked_workflow in ROOT.joinpath(".github", "workflows").glob("*.y*"):
         parsed = yaml.safe_load(checked_workflow.read_text(encoding="utf-8"))
@@ -204,14 +301,6 @@ def test_release_workflow_is_sha_pinned_least_privilege_and_digest_bound() -> No
     for action in action_uses:
         _name, separator, revision = action.rpartition("@")
         assert separator and len(revision) == 40 and all(character in "0123456789abcdef" for character in revision)
-
-    assert "python -m pip install" in workflow_text and "--require-hashes" in workflow_text
-    assert "python -m build --no-isolation" in workflow_text
-    assert "artifact-ids:" in workflow_text
-    assert "needs.build.outputs.bundle_sha256" in workflow_text
-    assert "verify-bundle" in workflow_text
-    assert "persist-credentials: false" in workflow_text
-    assert "fetch-depth: 0" in workflow_text
 
     requirements = ROOT.joinpath(".github", "release-requirements.txt").read_text(encoding="utf-8")
     requirement_lines = [line for line in requirements.splitlines() if line and not line.startswith("#")]
