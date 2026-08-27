@@ -72,8 +72,13 @@ The bundled `nuke-script` skill can open an existing absolute `.nk` path,
 inspect bounded node topology and knob values, sample per-channel AOV
 statistics, and explicitly save the current script. The `nuke-node-graph`
 skill adds non-clearing node CRUD, exact input connections, and readback-
-verified static knob edits while rejecting executable knobs. Releases use a
-canonical tag and exact-main identity check, one digest-bound wheel/sdist
+verified static knob edits while rejecting executable knobs. The
+`nuke-text-layout` skill creates or updates one bounded
+`Text2` label, maps requested pixel size through Nuke's effective
+`global_font_scale`, and returns verified node position, text box, and
+alignment readback with rollback on mismatch. It rejects arbitrary node
+classes, Python, Tcl, scripts, expressions, callbacks, and UI input. Releases
+use a canonical tag and exact-main identity check, one digest-bound wheel/sdist
 bundle, and a minimal-OIDC publisher in `release.yaml` and the GitHub `pypi`
 environment. Immediately before publishing, the workflow force-refreshes
 authoritative main and tag refs into an isolated namespace and repeats the
