@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.15.0](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.14.1...v0.15.0) (2026-08-27)
+
+
+### Features
+
+* add verified Text2 label layout ([0bb3549](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/0bb35499eb5da841977832f2c782b81d67330ae2))
+
+
+### Bug Fixes
+
+* harden Text2 label mutations ([1b21a08](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/1b21a08614718e3c8275a9843fa111458ef3dd3b))
+* reject animated Text2 labels ([6c5c9de](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/6c5c9ded92d6e96257c1b62062bc380767b17fd6))
+* validate Text2 knob probe states ([9769cbf](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/9769cbf16f56ba6865dd92864919c08da41f6bb1))
+* validate Text2 numeric readback ([35a4005](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/35a4005d85ce1e2382115fc698d5bd50db85f636))
+
 ## [0.14.1](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.14.0...v0.14.1) (2026-08-26)
 
 
