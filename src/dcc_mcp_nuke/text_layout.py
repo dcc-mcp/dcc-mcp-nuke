@@ -5,7 +5,10 @@ from __future__ import annotations
 import copy
 import math
 import re
+import unicodedata
 from typing import Any
+
+from dcc_mcp_nuke.node_graph import NodeGraphMutationError, create_node_handle, delete_node_handle
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$")
 _REQUIRED_KNOBS = ("message", "global_font_scale", "box", "xjustify", "yjustify")
@@ -45,6 +48,8 @@ def upsert_text2_label(
     _validate_identifier("node_name", node_name)
     if not isinstance(text, str) or not 1 <= len(text) <= 4096:
         raise TextLayoutValidationError("text must contain between 1 and 4096 characters")
+    if any(character in "[]\\" or unicodedata.category(character) in {"Cc", "Cs"} for character in text):
+        raise TextLayoutValidationError("text must be bounded non-executable plain text")
     font_size_px = _bounded_number("font_size_px", font_size_px, 1.0, 4096.0)
     _bounded_int("x", x, -1_000_000, 1_000_000)
     _bounded_int("y", y, -1_000_000, 1_000_000)
@@ -74,8 +79,7 @@ def upsert_text2_label(
         if node is not None and node.Class() != "Text2":
             raise TextLayoutValidationError("existing node must be a Text2 node")
         if created:
-            node = nuke.createNode("Text2", inpanel=False)
-            node.setName(node_name, uncollide=False)
+            node = create_node_handle(nuke, "Text2", name=node_name, x=x, y=y)
         assert node is not None
         knobs = node.knobs()
         if any(name not in knobs for name in _REQUIRED_KNOBS):
@@ -99,6 +103,8 @@ def upsert_text2_label(
         _rollback(nuke, node, created=created, previous=previous)
         if isinstance(exc, TextLayoutError):
             raise
+        if isinstance(exc, NodeGraphMutationError):
+            raise TextLayoutRuntimeError(str(exc)) from None
         raise TextLayoutRuntimeError("failed to apply Text2 label layout") from None
 
     return {
@@ -147,9 +153,7 @@ def _rollback(nuke: Any, node: Any, *, created: bool, previous: dict[str, Any] |
         if node is None:
             return
         if created:
-            nuke.delete(node)
-            if nuke.toNode(node.name()) is node:
-                raise TextLayoutRuntimeError("Text2 label rollback failed")
+            delete_node_handle(nuke, node)
             return
         if previous is None:
             return

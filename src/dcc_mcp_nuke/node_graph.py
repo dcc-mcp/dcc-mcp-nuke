@@ -14,6 +14,59 @@ _MAX_VALUE_DEPTH = 4
 _MAX_STRING_LENGTH = 4096
 
 
+class NodeGraphMutationError(RuntimeError):
+    """A stable public-safe graph transaction failure."""
+
+
+def create_node_handle(
+    nuke: Any,
+    node_class: str,
+    *,
+    name: str | None = None,
+    x: int | None = None,
+    y: int | None = None,
+) -> Any:
+    """Create one node and recover a uniquely attributable partial mutation."""
+    _validate_create_request(nuke, node_class, name=name, x=x, y=y)
+    before = _graph_snapshot(nuke)
+    created = None
+    try:
+        created = nuke.createNode(node_class, inpanel=False)
+        if name is not None:
+            created.setName(name, uncollide=False)
+        if x is not None and y is not None:
+            created.setXYpos(x, y)
+
+        after = _graph_snapshot(nuke)
+        if any(identity not in after for identity in before):
+            raise NodeGraphMutationError("pre-existing graph changed during node creation")
+        created_identity = _node_identity(created)
+        if created_identity not in after:
+            raise NodeGraphMutationError("created node is missing from graph readback")
+        if created.Class() != node_class:
+            raise NodeGraphMutationError("created node class does not match request")
+        if name is not None and created.name() != name:
+            raise NodeGraphMutationError("created node name does not match request")
+        actual_x, actual_y = _node_position(created)
+        if x is not None and (actual_x, actual_y) != (x, y):
+            raise NodeGraphMutationError("created node position does not match request")
+        return created
+    except Exception:
+        _recover_partial_creation(nuke, before, node_class=node_class, known_node=created)
+        raise
+
+
+def delete_node_handle(nuke: Any, node: Any) -> dict[str, Any]:
+    """Delete one captured node and verify removal without reusing its handle."""
+    identity = _node_identity(node)
+    node_name = str(node.name())
+    node_class = str(node.Class())
+    nuke.delete(node)
+    if identity in _graph_snapshot(nuke):
+        raise NodeGraphMutationError("deleted node is still present in graph readback")
+    return {"name": node_name, "class": node_class, "deleted": True}
+
+
 def list_node_graph(nuke: Any, *, max_nodes: int = 256, max_knobs_per_node: int = 64) -> dict[str, Any]:
     """Return bounded node identity, topology, and JSON-safe knob values."""
     _bounded_int("max_nodes", max_nodes, 1, 1000)
@@ -37,56 +90,15 @@ def create_node(
     y: int | None = None,
 ) -> dict[str, Any]:
     """Create one available node class without clearing or replacing existing nodes."""
-    _validate_identifier("node_class", node_class)
-    if name is not None:
-        _validate_identifier("name", name)
-    if (x is None) != (y is None):
-        raise ValueError("x and y must be provided together")
-    if x is not None:
-        _bounded_int("x", x, -1_000_000, 1_000_000)
-        _bounded_int("y", y, -1_000_000, 1_000_000)
-
-    available = set(nuke.allNodeClasses())
-    if node_class not in available:
-        raise ValueError("node_class is not available in this Nuke host")
-
-    before = list(nuke.allNodes(recurseGroups=True))
-    created = None
-    try:
-        created = nuke.createNode(node_class, inpanel=False)
-        if name is not None:
-            created.setName(name, uncollide=False)
-        if x is not None and y is not None:
-            created.setXYpos(x, y)
-
-        after = list(nuke.allNodes(recurseGroups=True))
-        if any(node not in after for node in before):
-            raise RuntimeError("pre-existing graph changed during node creation")
-        if created not in after:
-            raise RuntimeError("created node is missing from graph readback")
-        if created.Class() != node_class:
-            raise RuntimeError("created node class does not match request")
-        if name is not None and created.name() != name:
-            raise RuntimeError("created node name does not match request")
-
-        actual_x, actual_y = _node_position(created)
-        if x is not None and (actual_x, actual_y) != (x, y):
-            raise RuntimeError("created node position does not match request")
-        return {"name": created.name(), "class": created.Class(), "x": actual_x, "y": actual_y}
-    except Exception:
-        if created is not None and created in list(nuke.allNodes(recurseGroups=True)):
-            nuke.delete(created)
-        raise
+    created = create_node_handle(nuke, node_class, name=name, x=x, y=y)
+    actual_x, actual_y = _node_position(created)
+    return {"name": created.name(), "class": created.Class(), "x": actual_x, "y": actual_y}
 
 
 def delete_node(nuke: Any, node_name: str) -> dict[str, Any]:
     """Delete one exact node and verify that it is gone."""
     node = _require_node(nuke, node_name)
-    node_class = node.Class()
-    nuke.delete(node)
-    if nuke.toNode(node_name) is not None:
-        raise RuntimeError("deleted node is still present in graph readback")
-    return {"name": node_name, "class": node_class, "deleted": True}
+    return delete_node_handle(nuke, node)
 
 
 def connect_input(
@@ -181,6 +193,72 @@ def _require_node(nuke: Any, node_name: str) -> Any:
     if node is None:
         raise ValueError("node was not found")
     return node
+
+
+def _validate_create_request(
+    nuke: Any,
+    node_class: str,
+    *,
+    name: str | None,
+    x: int | None,
+    y: int | None,
+) -> None:
+    _validate_identifier("node_class", node_class)
+    if name is not None:
+        _validate_identifier("name", name)
+    if (x is None) != (y is None):
+        raise ValueError("x and y must be provided together")
+    if x is not None:
+        _bounded_int("x", x, -1_000_000, 1_000_000)
+        _bounded_int("y", y, -1_000_000, 1_000_000)
+    if node_class not in set(nuke.allNodeClasses()):
+        raise ValueError("node_class is not available in this Nuke host")
+
+
+def _graph_snapshot(nuke: Any) -> dict[str, Any]:
+    nodes = list(nuke.allNodes(recurseGroups=True))
+    snapshot = {_node_identity(node): node for node in nodes}
+    if len(snapshot) != len(nodes):
+        raise NodeGraphMutationError("node graph identity readback is ambiguous")
+    return snapshot
+
+
+def _node_identity(node: Any) -> str:
+    full_name = getattr(node, "fullName", None)
+    return str(full_name()) if callable(full_name) else str(node.name())
+
+
+def _recover_partial_creation(
+    nuke: Any,
+    before: dict[str, Any],
+    *,
+    node_class: str,
+    known_node: Any,
+) -> None:
+    after = _graph_snapshot(nuke)
+    if known_node is not None:
+        identity = _node_identity(known_node)
+        if identity in after:
+            try:
+                delete_node_handle(nuke, known_node)
+            except Exception:
+                raise NodeGraphMutationError(f"{node_class} partial creation rollback failed") from None
+        return
+
+    added = [node for identity, node in after.items() if identity not in before]
+    if not added:
+        return
+    if len(added) != 1:
+        raise NodeGraphMutationError(f"{node_class} partial creation attribution is ambiguous")
+    candidate = added[0]
+    try:
+        if candidate.Class() != node_class:
+            raise NodeGraphMutationError(f"{node_class} partial creation attribution is ambiguous")
+        delete_node_handle(nuke, candidate)
+    except NodeGraphMutationError:
+        raise
+    except Exception:
+        raise NodeGraphMutationError(f"{node_class} partial creation rollback failed") from None
 
 
 def _require_knob(nuke: Any, node_name: str, knob_name: str) -> tuple[Any, Any]:

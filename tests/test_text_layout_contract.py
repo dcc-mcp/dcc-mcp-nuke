@@ -76,6 +76,13 @@ class FakeNuke:
     def toNode(self, name):
         return next((node for node in self.nodes if node.name() == name), None)
 
+    def allNodes(self, recurseGroups=True):
+        assert recurseGroups is True
+        return list(self.nodes)
+
+    def allNodeClasses(self):
+        return ["Text2"]
+
     def createNode(self, node_class, inpanel=False):
         assert node_class == "Text2"
         assert inpanel is False
@@ -188,6 +195,36 @@ def test_invalid_parameters_fail_before_mutation(overrides, message):
     assert nuke.nodes == []
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "[value root.name]",
+        '[python {"REVIEW_MARKER"}]',
+        "escaped\\[value root.name]",
+        "left [ bracket",
+        "right ] bracket",
+        "line\nfeed",
+        "null\x00byte",
+        "escape\x1bsequence",
+    ],
+)
+def test_executable_or_control_shaped_text_is_rejected_before_mutation(text):
+    nuke = FakeNuke()
+
+    with pytest.raises(ValueError, match="text must be bounded non-executable plain text"):
+        upsert_text2_label(nuke, **_request(text=text))
+
+    assert nuke.nodes == []
+
+
+def test_ordinary_unicode_text_is_not_overblocked():
+    nuke = FakeNuke()
+
+    result = upsert_text2_label(nuke, **_request(text="镜头 010 — Café 👩‍💻 (final)!"))
+
+    assert result["layout"]["text"] == "镜头 010 — Café 👩‍💻 (final)!"
+
+
 def test_existing_non_text2_name_collision_is_rejected_without_mutation():
     collision = FakeNode("ShotLabel", "NoOp")
     nuke = FakeNuke([collision])
@@ -241,6 +278,63 @@ def test_create_readback_mismatch_deletes_partial_node():
     assert nuke.nodes == []
 
 
+def test_create_then_raise_removes_uniquely_attributable_partial_text2():
+    class MutateThenRaiseNuke(FakeNuke):
+        def createNode(self, node_class, inpanel=False):
+            super().createNode(node_class, inpanel=inpanel)
+            raise OSError("host create failed after mutation")
+
+    nuke = MutateThenRaiseNuke()
+
+    with pytest.raises(RuntimeError, match="failed to apply Text2 label layout"):
+        upsert_text2_label(nuke, **_request())
+
+    assert nuke.nodes == []
+
+
+def test_partial_create_fails_closed_when_graph_attribution_is_ambiguous():
+    class AmbiguousMutateThenRaiseNuke(FakeNuke):
+        def createNode(self, node_class, inpanel=False):
+            super().createNode(node_class, inpanel=inpanel)
+            self.nodes.append(FakeNode("ConcurrentText", "Text2"))
+            raise OSError("host create failed after concurrent mutation")
+
+    nuke = AmbiguousMutateThenRaiseNuke()
+
+    with pytest.raises(RuntimeError, match="Text2 partial creation attribution is ambiguous"):
+        upsert_text2_label(nuke, **_request())
+
+    assert len(nuke.nodes) == 2
+
+
+def test_successful_partial_node_delete_does_not_dereference_invalidated_handle():
+    class InvalidatingNode(FakeNode):
+        deleted = False
+
+        def name(self):
+            if self.deleted:
+                raise RuntimeError("invalid node handle")
+            return super().name()
+
+    class InvalidatingMismatchNuke(FakeNuke):
+        def createNode(self, node_class, inpanel=False):
+            node = InvalidatingNode()
+            node._knobs["global_font_scale"] = FakeKnob(1.0, ignore_value=0.5)
+            self.nodes.append(node)
+            return node
+
+        def delete(self, node):
+            self.nodes.remove(node)
+            node.deleted = True
+
+    nuke = InvalidatingMismatchNuke()
+
+    with pytest.raises(RuntimeError, match="Text2 label readback does not match request"):
+        upsert_text2_label(nuke, **_request())
+
+    assert nuke.nodes == []
+
+
 def test_text_layout_skill_schema_runtime_and_deadline_contract():
     from dcc_mcp_core import validate_skill
 
@@ -278,6 +372,10 @@ def test_text_layout_skill_schema_runtime_and_deadline_contract():
     del missing_text["text"]
     with pytest.raises(ValidationError):
         validate(missing_text, schema)
+    for text in ("[value root.name]", '[python {"REVIEW_MARKER"}]', "escaped\\label", "line\nfeed"):
+        with pytest.raises(ValidationError):
+            validate(_request(text=text), schema)
+    validate(_request(text="镜头 010 — Café 👩‍💻"), schema)
 
 
 def test_server_loads_text_layout_on_the_existing_main_thread_bridge(monkeypatch):
@@ -311,6 +409,18 @@ def test_tool_route_redacts_unexpected_host_failure(monkeypatch):
     assert result["success"] is False
     assert result["error"] == "failed to apply Text2 label layout"
     assert "private" not in str(result)
+
+
+def test_tool_route_rejects_expression_shaped_message_before_host_mutation(monkeypatch):
+    nuke = FakeNuke()
+    monkeypatch.setitem(sys.modules, "nuke", nuke)
+    route = _load_tool_route()
+
+    result = route.main.__wrapped__(**_request(text='[python {"REVIEW_MARKER"}]'))
+
+    assert result["success"] is False
+    assert result["error"] == "text must be bounded non-executable plain text"
+    assert nuke.nodes == []
 
 
 def test_text_layout_contract_is_in_package_surface_and_documented():
