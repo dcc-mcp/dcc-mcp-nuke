@@ -38,6 +38,9 @@ Nuke 15's effective Text2 sizing behavior is `global_font_scale`, not the inert
 `global_font_scale`, then returns the actual scale, derived pixel size, graph
 position, box, and alignment. A mismatched readback rolls back an update or
 deletes a partially created node; it never reports success without a match.
+Scale, every box coordinate, and both graph-position coordinates must read back
+as finite non-boolean numeric values. The box must be an exact four-element
+list or tuple; unsupported containers and malformed lengths fail closed.
 
 The registered route is synchronous, main-thread-affine, and has a 30-second
 deadline hint. Save the Nuke script separately only after layout assertions

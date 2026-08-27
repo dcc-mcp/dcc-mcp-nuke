@@ -97,7 +97,8 @@ def upsert_text2_label(
         if nuke.toNode(node_name) is not node or node.name() != node_name or node.Class() != "Text2":
             raise TextLayoutRuntimeError("Text2 label identity readback does not match request")
         actual = _readback(node)
-        if actual != requested or (int(node.xpos()), int(node.ypos())) != (x, y):
+        actual_position = (_finite_readback_number(node.xpos()), _finite_readback_number(node.ypos()))
+        if actual != requested or actual_position != (x, y):
             raise TextLayoutRuntimeError("Text2 label readback does not match request")
     except Exception as exc:
         _rollback(nuke, node, created=created, previous=previous)
@@ -184,15 +185,21 @@ def _validate_animation_curves(animations: Any) -> None:
 def _readback(node: Any) -> dict[str, Any]:
     knobs = node.knobs()
     box = knobs["box"].value()
-    if not isinstance(box, (list, tuple)) or len(box) != 4:
+    if type(box) not in (list, tuple) or len(box) != 4:
         raise TextLayoutRuntimeError("Text2 label readback does not match request")
     return {
         "text": knobs["message"].value(),
-        "global_font_scale": knobs["global_font_scale"].value(),
-        "box": list(box),
+        "global_font_scale": _finite_readback_number(knobs["global_font_scale"].value()),
+        "box": [_finite_readback_number(value) for value in box],
         "horizontal_justify": knobs["xjustify"].value(),
         "vertical_justify": knobs["yjustify"].value(),
     }
+
+
+def _finite_readback_number(value: Any) -> float:
+    if type(value) not in (int, float) or not math.isfinite(value):
+        raise TextLayoutRuntimeError("Text2 label readback does not match request")
+    return float(value)
 
 
 def _rollback(nuke: Any, node: Any, *, created: bool, previous: dict[str, Any] | None) -> None:

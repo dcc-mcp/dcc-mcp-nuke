@@ -124,6 +124,29 @@ class ProbeShapeKnob(DynamicFakeKnob):
         return self.result if self.probe == "getNumKeys" else self.key_count
 
 
+class HostileFloat(float):
+    def __float__(self):
+        raise RuntimeError("hostile float conversion")
+
+
+class HostileBox(list):
+    def __len__(self):
+        raise RuntimeError("hostile box length")
+
+    def __iter__(self):
+        raise RuntimeError("hostile box iteration")
+
+
+class ReadbackOverrideKnob(FakeKnob):
+    def __init__(self, value, *, requested, readback):
+        super().__init__(value)
+        self.requested = requested
+        self.readback = readback
+
+    def setValue(self, value):
+        self.current = self.readback if value == self.requested else value
+
+
 class FakeNode:
     def __init__(self, name="Text2", node_class="Text2"):
         self._name = name
@@ -235,6 +258,176 @@ def test_upsert_text2_label_production_route_creates_and_reads_back_layout(monke
         "horizontal_justify": "center",
         "vertical_justify": "center",
     }
+
+
+def test_tool_route_rejects_bool_font_scale_readback_and_rolls_back(monkeypatch):
+    class BoolScaleReadbackKnob(FakeKnob):
+        def setValue(self, value):
+            self.current = True if value == 1.0 else value
+
+    node = FakeNode("ShotLabel")
+    node._knobs["global_font_scale"] = BoolScaleReadbackKnob(0.5)
+    node.setXYpos(7, 9)
+    before = {name: knob.value() for name, knob in node.knobs().items()}
+    nuke = FakeNuke([node])
+    monkeypatch.setitem(sys.modules, "nuke", nuke)
+    route = _load_tool_route()
+
+    result = route.main.__wrapped__(**_request(font_size_px=64.0))
+
+    assert result["success"] is False
+    assert result["error"] == "Text2 label readback does not match request"
+    assert {name: knob.value() for name, knob in node.knobs().items()} == before
+    assert (node.xpos(), node.ypos()) == (7, 9)
+
+
+def test_bool_box_element_readback_fails_closed_and_rolls_back():
+    class BoolBoxReadbackKnob(FakeKnob):
+        def setValue(self, value):
+            self.current = [True, *value[1:]] if value == [1.0, 20.0, 641.0, 100.0] else value
+
+    node = FakeNode("ShotLabel")
+    node._knobs["box"] = BoolBoxReadbackKnob([0.0, 0.0, 1920.0, 1080.0])
+    node.setXYpos(7, 9)
+    before = {name: knob.value() for name, knob in node.knobs().items()}
+    nuke = FakeNuke([node])
+
+    with pytest.raises(RuntimeError, match="Text2 label readback does not match request"):
+        upsert_text2_label(nuke, **_request(box_x=1.0))
+
+    assert {name: knob.value() for name, knob in node.knobs().items()} == before
+    assert (node.xpos(), node.ypos()) == (7, 9)
+
+
+def test_bool_position_readback_fails_closed_and_rolls_back():
+    class BoolPositionNode(FakeNode):
+        def setXYpos(self, x, y):
+            self._x, self._y = (True, y) if (x, y) == (1, 240) else (x, y)
+
+    node = BoolPositionNode("ShotLabel")
+    node.setXYpos(7, 9)
+    before = {name: knob.value() for name, knob in node.knobs().items()}
+    nuke = FakeNuke([node])
+
+    with pytest.raises(RuntimeError, match="Text2 label readback does not match request"):
+        upsert_text2_label(nuke, **_request(x=1))
+
+    assert {name: knob.value() for name, knob in node.knobs().items()} == before
+    assert (node.xpos(), node.ypos()) == (7, 9)
+
+
+_INVALID_NUMERIC_READBACKS = [
+    pytest.param(lambda: True, id="bool"),
+    pytest.param(lambda: math.nan, id="nan"),
+    pytest.param(lambda: math.inf, id="positive-infinity"),
+    pytest.param(lambda: -math.inf, id="negative-infinity"),
+    pytest.param(lambda: "1.0", id="string"),
+    pytest.param(lambda: [1.0], id="container"),
+    pytest.param(object, id="object"),
+    pytest.param(lambda: HostileFloat(1.0), id="hostile-float-subclass"),
+]
+
+
+@pytest.mark.parametrize("readback_factory", _INVALID_NUMERIC_READBACKS)
+def test_invalid_font_scale_readback_fails_closed_and_rolls_back(readback_factory):
+    node = FakeNode("ShotLabel")
+    node._knobs["global_font_scale"] = ReadbackOverrideKnob(1.0, requested=0.5, readback=readback_factory())
+    node.setXYpos(7, 9)
+    before = {name: knob.value() for name, knob in node.knobs().items()}
+    nuke = FakeNuke([node])
+
+    with pytest.raises(RuntimeError, match="Text2 label readback does not match request"):
+        upsert_text2_label(nuke, **_request())
+
+    assert {name: knob.value() for name, knob in node.knobs().items()} == before
+    assert (node.xpos(), node.ypos()) == (7, 9)
+
+
+@pytest.mark.parametrize("index", range(4))
+@pytest.mark.parametrize("readback_factory", _INVALID_NUMERIC_READBACKS)
+def test_invalid_box_element_readback_fails_closed_and_rolls_back(index, readback_factory):
+    requested = [10.0, 20.0, 650.0, 100.0]
+    readback = list(requested)
+    readback[index] = readback_factory()
+    node = FakeNode("ShotLabel")
+    node._knobs["box"] = ReadbackOverrideKnob([0.0, 0.0, 1920.0, 1080.0], requested=requested, readback=readback)
+    node.setXYpos(7, 9)
+    before = {name: knob.value() for name, knob in node.knobs().items()}
+    nuke = FakeNuke([node])
+
+    with pytest.raises(RuntimeError, match="Text2 label readback does not match request"):
+        upsert_text2_label(nuke, **_request())
+
+    assert {name: knob.value() for name, knob in node.knobs().items()} == before
+    assert (node.xpos(), node.ypos()) == (7, 9)
+
+
+_INVALID_BOX_SHAPES = [
+    pytest.param(lambda: None, id="none"),
+    pytest.param(object, id="object"),
+    pytest.param(lambda: "10,20,650,100", id="string"),
+    pytest.param(lambda: [10.0, 20.0, 650.0], id="short-list"),
+    pytest.param(lambda: (10.0, 20.0, 650.0), id="short-tuple"),
+    pytest.param(lambda: [10.0, 20.0, 650.0, 100.0, 0.0], id="long-list"),
+    pytest.param(lambda: (value for value in (10.0, 20.0, 650.0, 100.0)), id="generator"),
+    pytest.param(lambda: HostileBox([10.0, 20.0, 650.0, 100.0]), id="hostile-list-subclass"),
+]
+
+
+@pytest.mark.parametrize("readback_factory", _INVALID_BOX_SHAPES)
+def test_invalid_box_readback_shape_fails_closed_and_rolls_back(readback_factory):
+    requested = [10.0, 20.0, 650.0, 100.0]
+    node = FakeNode("ShotLabel")
+    node._knobs["box"] = ReadbackOverrideKnob(
+        [0.0, 0.0, 1920.0, 1080.0], requested=requested, readback=readback_factory()
+    )
+    node.setXYpos(7, 9)
+    before = {name: knob.value() for name, knob in node.knobs().items()}
+    nuke = FakeNuke([node])
+
+    with pytest.raises(RuntimeError, match="Text2 label readback does not match request"):
+        upsert_text2_label(nuke, **_request())
+
+    assert {name: knob.value() for name, knob in node.knobs().items()} == before
+    assert (node.xpos(), node.ypos()) == (7, 9)
+
+
+@pytest.mark.parametrize("axis", ["x", "y"])
+@pytest.mark.parametrize("readback_factory", _INVALID_NUMERIC_READBACKS)
+def test_invalid_position_readback_fails_closed_and_rolls_back(axis, readback_factory):
+    class InvalidPositionNode(FakeNode):
+        def setXYpos(self, x, y):
+            if (x, y) == (120, 240):
+                self._x = readback_factory() if axis == "x" else x
+                self._y = readback_factory() if axis == "y" else y
+            else:
+                self._x, self._y = x, y
+
+    node = InvalidPositionNode("ShotLabel")
+    node.setXYpos(7, 9)
+    before = {name: knob.value() for name, knob in node.knobs().items()}
+    nuke = FakeNuke([node])
+
+    with pytest.raises(RuntimeError, match="Text2 label readback does not match request"):
+        upsert_text2_label(nuke, **_request())
+
+    assert {name: knob.value() for name, knob in node.knobs().items()} == before
+    assert (node.xpos(), node.ypos()) == (7, 9)
+
+
+def test_invalid_numeric_readback_on_new_text2_deletes_partial_node():
+    class InvalidReadbackNuke(FakeNuke):
+        def createNode(self, node_class, inpanel=False):
+            node = super().createNode(node_class, inpanel=inpanel)
+            node._knobs["global_font_scale"] = ReadbackOverrideKnob(1.0, requested=0.5, readback=True)
+            return node
+
+    nuke = InvalidReadbackNuke()
+
+    with pytest.raises(RuntimeError, match="Text2 label readback does not match request"):
+        upsert_text2_label(nuke, **_request())
+
+    assert nuke.nodes == []
 
 
 def _request(**overrides):
@@ -706,4 +899,6 @@ def test_text_layout_contract_is_in_package_surface_and_documented():
     assert TOOL_ROUTE.exists()
     assert "global_font_scale" in skill_text
     assert "Text2" in skill_text
+    assert "finite non-boolean numeric values" in skill_text
     assert "nuke-text-layout" in readme
+    assert "finite non-boolean numeric values" in readme

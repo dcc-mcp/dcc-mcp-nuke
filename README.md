@@ -81,7 +81,9 @@ classes, Python, Tcl, scripts, expressions, callbacks, bracket/backslash/control
 text, animated/keyed/expression-bearing required knobs, and UI input while
 preserving ordinary Unicode labels. Dynamic-state probes must return their
 documented boolean, curve-list, and non-negative key-count shapes; unsupported
-or unobservable probe results fail closed before mutation. Releases
+or unobservable probe results fail closed before mutation. Scale, box, and
+position readback must use finite non-boolean numeric values with exact bounded
+shapes; malformed readback fails closed and rolls back. Releases
 use a canonical tag and exact-main identity check, one digest-bound wheel/sdist
 bundle, and a minimal-OIDC publisher in `release.yaml` and the GitHub `pypi`
 environment. Immediately before publishing, the workflow force-refreshes
