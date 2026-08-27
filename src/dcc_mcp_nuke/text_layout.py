@@ -155,15 +155,30 @@ def _knob_has_dynamic_state(knob: Any) -> bool:
 
 
 def _dynamic_probe_values(methods: dict[str, Any]) -> bool:
-    if bool(methods["isAnimated"]()) or bool(methods["hasExpression"]()):
-        return True
+    animated = methods["isAnimated"]()
+    expression = methods["hasExpression"]()
     animations = methods["animations"]()
-    if animations is not None and len(animations) > 0:
-        return True
     key_count = methods["getNumKeys"]()
-    if isinstance(key_count, bool) or not isinstance(key_count, int) or key_count < 0:
+
+    if type(animated) is not bool or type(expression) is not bool:
         raise TextLayoutRuntimeError("Text2 required knob state could not be verified")
-    return key_count > 0
+    _validate_animation_curves(animations)
+    if type(key_count) is not int or key_count < 0:
+        raise TextLayoutRuntimeError("Text2 required knob state could not be verified")
+
+    return animated or expression or len(animations) > 0 or key_count > 0
+
+
+def _validate_animation_curves(animations: Any) -> None:
+    if type(animations) not in (list, tuple):
+        raise TextLayoutRuntimeError("Text2 required knob state could not be verified")
+    for curve in animations:
+        keys = getattr(curve, "keys", None)
+        if not callable(keys):
+            raise TextLayoutRuntimeError("Text2 required knob state could not be verified")
+        curve_keys = keys()
+        if type(curve_keys) not in (list, tuple):
+            raise TextLayoutRuntimeError("Text2 required knob state could not be verified")
 
 
 def _readback(node: Any) -> dict[str, Any]:

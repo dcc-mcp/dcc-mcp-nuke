@@ -78,6 +78,52 @@ class DynamicFakeKnob(FakeKnob):
         return self.key_count
 
 
+class FakeAnimationCurve:
+    def __init__(self, view, keys):
+        self.view = view
+        self._keys = list(keys)
+
+    def keys(self):
+        return list(self._keys)
+
+
+class HostileEmptyAnimations:
+    def __len__(self):
+        return 0
+
+    def __iter__(self):
+        raise RuntimeError("hostile iterator")
+
+
+class RaisingAnimationsIterator:
+    def __iter__(self):
+        raise RuntimeError("iterator failed")
+
+
+class FalsyProbeResult:
+    def __bool__(self):
+        return False
+
+
+class ProbeShapeKnob(DynamicFakeKnob):
+    def __init__(self, value, *, probe, result):
+        super().__init__(value)
+        self.probe = probe
+        self.result = result
+
+    def isAnimated(self, **_kwargs):
+        return self.result if self.probe == "isAnimated" else False
+
+    def hasExpression(self, **_kwargs):
+        return self.result if self.probe == "hasExpression" else False
+
+    def animations(self, **_kwargs):
+        return self.result if self.probe == "animations" else []
+
+    def getNumKeys(self, **_kwargs):
+        return self.result if self.probe == "getNumKeys" else self.key_count
+
+
 class FakeNode:
     def __init__(self, name="Text2", node_class="Text2"):
         self._name = name
@@ -337,8 +383,8 @@ def test_multi_view_animation_curve_fails_before_mutation():
     box = DynamicFakeKnob(
         [0.0, 0.0, 1920.0, 1080.0],
         animations=[
-            {"view": "left", "frames": {1: [0.0, 0.0, 10.0, 10.0]}},
-            {"view": "right", "frames": {2: [1.0, 1.0, 20.0, 20.0]}},
+            FakeAnimationCurve("left", [1]),
+            FakeAnimationCurve("right", [2]),
         ],
     )
     node._knobs["box"] = box
@@ -348,8 +394,47 @@ def test_multi_view_animation_curve_fails_before_mutation():
         upsert_text2_label(nuke, **_request())
 
     assert box.set_calls == []
-    assert box.animations()[0]["view"] == "left"
-    assert box.animations()[1]["view"] == "right"
+    assert box.animations()[0].view == "left"
+    assert box.animations()[1].view == "right"
+
+
+_HOSTILE_PROBE_RESULTS = [
+    pytest.param("isAnimated", lambda: None, id="animated-none"),
+    pytest.param("isAnimated", lambda: 0, id="animated-integer-zero"),
+    pytest.param("isAnimated", FalsyProbeResult, id="animated-hostile-falsy"),
+    pytest.param("hasExpression", lambda: None, id="expression-none"),
+    pytest.param("hasExpression", lambda: 0, id="expression-integer-zero"),
+    pytest.param("hasExpression", FalsyProbeResult, id="expression-hostile-falsy"),
+    pytest.param("animations", lambda: None, id="animations-none"),
+    pytest.param("animations", HostileEmptyAnimations, id="animations-hostile-empty"),
+    pytest.param("animations", lambda: (item for item in ()), id="animations-generator"),
+    pytest.param("animations", RaisingAnimationsIterator, id="animations-iterator-error"),
+    pytest.param("animations", lambda: [None], id="animations-none-entry"),
+    pytest.param("animations", lambda: [object()], id="animations-invalid-entry"),
+    pytest.param("getNumKeys", lambda: False, id="key-count-bool"),
+    pytest.param("getNumKeys", lambda: -1, id="key-count-negative"),
+]
+
+
+@pytest.mark.parametrize("knob_name", ["message", "global_font_scale", "box", "xjustify", "yjustify"])
+@pytest.mark.parametrize(("probe", "result_factory"), _HOSTILE_PROBE_RESULTS)
+def test_unsupported_dynamic_probe_shape_fails_closed_before_mutation(knob_name, probe, result_factory):
+    node = FakeNode("ShotLabel")
+    original = node[knob_name].value()
+    hostile = ProbeShapeKnob(original, probe=probe, result=result_factory())
+    node._knobs[knob_name] = hostile
+    node.setXYpos(7, 9)
+    before = {name: knob.value() for name, knob in node.knobs().items()}
+    nuke = FakeNuke([node])
+
+    with pytest.raises(RuntimeError, match="Text2 required knob state could not be verified"):
+        upsert_text2_label(nuke, **_request())
+
+    assert {name: knob.value() for name, knob in node.knobs().items()} == before
+    assert (node.xpos(), node.ypos()) == (7, 9)
+    assert hostile.set_calls == []
+    assert hostile.key_count == 0
+    assert nuke.nodes == [node]
 
 
 def test_expression_reported_from_a_non_main_view_fails_before_mutation():
@@ -417,6 +502,21 @@ def test_dynamic_host_default_on_new_text2_deletes_partial_node():
     nuke = DynamicDefaultNuke()
 
     with pytest.raises(RuntimeError, match="Text2 required knobs must be static"):
+        upsert_text2_label(nuke, **_request())
+
+    assert nuke.nodes == []
+
+
+def test_unverifiable_host_default_on_new_text2_deletes_partial_node_without_mutation():
+    class UnverifiableDefaultNuke(FakeNuke):
+        def createNode(self, node_class, inpanel=False):
+            node = super().createNode(node_class, inpanel=inpanel)
+            node._knobs["message"] = ProbeShapeKnob("", probe="animations", result=None)
+            return node
+
+    nuke = UnverifiableDefaultNuke()
+
+    with pytest.raises(RuntimeError, match="Text2 required knob state could not be verified"):
         upsert_text2_label(nuke, **_request())
 
     assert nuke.nodes == []
