@@ -78,7 +78,8 @@ verified static knob edits while rejecting executable knobs. The
 `global_font_scale`, and returns verified node position, text box, and
 alignment readback with rollback on mismatch. It rejects arbitrary node
 classes, Python, Tcl, scripts, expressions, callbacks, bracket/backslash/control
-text, and UI input while preserving ordinary Unicode labels. Releases
+text, animated/keyed/expression-bearing required knobs, and UI input while
+preserving ordinary Unicode labels. Releases
 use a canonical tag and exact-main identity check, one digest-bound wheel/sdist
 bundle, and a minimal-OIDC publisher in `release.yaml` and the GitHub `pypi`
 environment. Immediately before publishing, the workflow force-refreshes

@@ -25,6 +25,11 @@ any other class is rejected. The tool accepts bounded Unicode plain text
 without brackets, backslashes, or control characters, plus a requested
 pixel size, graph position, text box, and fixed alignment enums. It does not
 accept a node class, Python, Tcl, scripts, callbacks, expressions, or UI input.
+Every required Text2 knob must be static under Nuke's aggregate knob-state
+probes (`isAnimated`, `hasExpression`, all animation curves, and key count).
+An animated, keyed, expression-bearing, or unobservable knob fails before an
+existing node is changed; the tool never flattens multi-frame or multi-view
+animation to a current-frame value.
 
 Nuke 15's effective Text2 sizing behavior is `global_font_scale`, not the inert
 `font_size` knob. The tool maps `font_size_px / 64.0` to
