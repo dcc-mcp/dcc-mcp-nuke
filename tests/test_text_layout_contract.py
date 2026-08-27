@@ -29,6 +29,54 @@ class FakeKnob:
             return
         self.current = value
 
+    def isAnimated(self, **_kwargs):
+        return False
+
+    def hasExpression(self, **_kwargs):
+        return False
+
+    def animations(self, **_kwargs):
+        return []
+
+    def getNumKeys(self, **_kwargs):
+        return 0
+
+
+class DynamicFakeKnob(FakeKnob):
+    def __init__(
+        self,
+        value,
+        *,
+        animated=False,
+        expression=False,
+        animations=(),
+        key_count=0,
+    ):
+        super().__init__(value)
+        self.animated = animated
+        self.expression = expression
+        self.animation_curves = list(animations)
+        self.key_count = key_count
+        self.set_calls = []
+
+    def setValue(self, value):
+        self.set_calls.append(value)
+        if self.animated:
+            self.key_count += 1
+        super().setValue(value)
+
+    def isAnimated(self, **_kwargs):
+        return self.animated
+
+    def hasExpression(self, **_kwargs):
+        return self.expression
+
+    def animations(self, **_kwargs):
+        return list(self.animation_curves)
+
+    def getNumKeys(self, **_kwargs):
+        return self.key_count
+
 
 class FakeNode:
     def __init__(self, name="Text2", node_class="Text2"):
@@ -82,6 +130,9 @@ class FakeNuke:
 
     def allNodeClasses(self):
         return ["Text2"]
+
+    def views(self):
+        return ["main"]
 
     def createNode(self, node_class, inpanel=False):
         assert node_class == "Text2"
@@ -246,6 +297,129 @@ def test_existing_text2_missing_required_knob_fails_without_rollback_mutation():
 
     assert nuke.nodes == [node]
     assert node["message"].value() == ""
+
+
+@pytest.mark.parametrize("knob_name", ["message", "global_font_scale", "box", "xjustify", "yjustify"])
+def test_animated_required_knob_fails_before_any_mutation(knob_name):
+    node = FakeNode("ShotLabel")
+    original = node[knob_name].value()
+    dynamic = DynamicFakeKnob(original, animated=True, key_count=2)
+    node._knobs[knob_name] = dynamic
+    node.setXYpos(7, 9)
+    before = {name: knob.value() for name, knob in node.knobs().items()}
+    nuke = FakeNuke([node])
+
+    with pytest.raises(RuntimeError, match="Text2 required knobs must be static"):
+        upsert_text2_label(nuke, **_request())
+
+    assert {name: knob.value() for name, knob in node.knobs().items()} == before
+    assert (node.xpos(), node.ypos()) == (7, 9)
+    assert dynamic.set_calls == []
+    assert dynamic.key_count == 2
+    assert nuke.nodes == [node]
+
+
+def test_expression_only_required_knob_fails_before_mutation():
+    node = FakeNode("ShotLabel")
+    expression = DynamicFakeKnob(1.0, expression=True)
+    node._knobs["global_font_scale"] = expression
+    nuke = FakeNuke([node])
+
+    with pytest.raises(RuntimeError, match="Text2 required knobs must be static"):
+        upsert_text2_label(nuke, **_request())
+
+    assert expression.set_calls == []
+    assert expression.value() == 1.0
+
+
+def test_multi_view_animation_curve_fails_before_mutation():
+    node = FakeNode("ShotLabel")
+    box = DynamicFakeKnob(
+        [0.0, 0.0, 1920.0, 1080.0],
+        animations=[
+            {"view": "left", "frames": {1: [0.0, 0.0, 10.0, 10.0]}},
+            {"view": "right", "frames": {2: [1.0, 1.0, 20.0, 20.0]}},
+        ],
+    )
+    node._knobs["box"] = box
+    nuke = FakeNuke([node])
+
+    with pytest.raises(RuntimeError, match="Text2 required knobs must be static"):
+        upsert_text2_label(nuke, **_request())
+
+    assert box.set_calls == []
+    assert box.animations()[0]["view"] == "left"
+    assert box.animations()[1]["view"] == "right"
+
+
+def test_expression_reported_from_a_non_main_view_fails_before_mutation():
+    class ViewExpressionKnob(DynamicFakeKnob):
+        expressions_by_view = {"main": False, "left": False, "right": True}
+
+        def hasExpression(self, **_kwargs):
+            return any(self.expressions_by_view.values())
+
+    node = FakeNode("ShotLabel")
+    expression = ViewExpressionKnob("left")
+    node._knobs["xjustify"] = expression
+    nuke = FakeNuke([node])
+
+    with pytest.raises(RuntimeError, match="Text2 required knobs must be static"):
+        upsert_text2_label(nuke, **_request())
+
+    assert expression.set_calls == []
+    assert expression.value() == "left"
+
+
+def test_keyed_knob_does_not_insert_a_key_or_reach_later_readback_failure():
+    node = FakeNode("ShotLabel")
+    keyed_scale = DynamicFakeKnob(1.0, key_count=2)
+    node._knobs["global_font_scale"] = keyed_scale
+    node._knobs["box"] = FakeKnob([0.0, 0.0, 1920.0, 1080.0], ignore_value=[10.0, 20.0, 650.0, 100.0])
+    nuke = FakeNuke([node])
+
+    with pytest.raises(RuntimeError, match="Text2 required knobs must be static"):
+        upsert_text2_label(nuke, **_request())
+
+    assert keyed_scale.set_calls == []
+    assert keyed_scale.key_count == 2
+    assert keyed_scale.value() == 1.0
+    assert node["box"].value() == [0.0, 0.0, 1920.0, 1080.0]
+
+
+def test_unobservable_animation_state_returns_a_redacted_error_without_mutation(monkeypatch):
+    class UnobservableKnob(FakeKnob):
+        def isAnimated(self, **_kwargs):
+            raise OSError("private/project/path")
+
+    node = FakeNode("ShotLabel")
+    knob = UnobservableKnob(1.0)
+    node._knobs["global_font_scale"] = knob
+    nuke = FakeNuke([node])
+    monkeypatch.setitem(sys.modules, "nuke", nuke)
+    route = _load_tool_route()
+
+    result = route.main.__wrapped__(**_request())
+
+    assert result["success"] is False
+    assert result["error"] == "Text2 required knob state could not be verified"
+    assert "private" not in str(result)
+    assert knob.value() == 1.0
+
+
+def test_dynamic_host_default_on_new_text2_deletes_partial_node():
+    class DynamicDefaultNuke(FakeNuke):
+        def createNode(self, node_class, inpanel=False):
+            node = super().createNode(node_class, inpanel=inpanel)
+            node._knobs["global_font_scale"] = DynamicFakeKnob(1.0, animated=True, key_count=2)
+            return node
+
+    nuke = DynamicDefaultNuke()
+
+    with pytest.raises(RuntimeError, match="Text2 required knobs must be static"):
+        upsert_text2_label(nuke, **_request())
+
+    assert nuke.nodes == []
 
 
 def test_update_readback_mismatch_rolls_back_all_layout_state():

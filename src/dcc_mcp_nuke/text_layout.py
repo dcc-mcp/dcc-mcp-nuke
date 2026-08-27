@@ -69,7 +69,6 @@ def upsert_text2_label(
         "horizontal_justify": horizontal_justify,
         "vertical_justify": vertical_justify,
     }
-
     node = None
     created = False
     previous = None
@@ -84,6 +83,7 @@ def upsert_text2_label(
         knobs = node.knobs()
         if any(name not in knobs for name in _REQUIRED_KNOBS):
             raise TextLayoutValidationError("Text2 node does not expose the required layout knobs")
+        _require_static_knobs(knobs)
         if not created:
             previous = _snapshot(node, knobs)
 
@@ -132,6 +132,38 @@ def _snapshot(node: Any, knobs: dict[str, Any]) -> dict[str, Any]:
         "x": int(node.xpos()),
         "y": int(node.ypos()),
     }
+
+
+def _require_static_knobs(knobs: dict[str, Any]) -> None:
+    for name in _REQUIRED_KNOBS:
+        knob = knobs[name]
+        if _knob_has_dynamic_state(knob):
+            raise TextLayoutRuntimeError("Text2 required knobs must be static")
+
+
+def _knob_has_dynamic_state(knob: Any) -> bool:
+    probes = ("isAnimated", "hasExpression", "animations", "getNumKeys")
+    methods = {name: getattr(knob, name, None) for name in probes}
+    if any(not callable(method) for method in methods.values()):
+        raise TextLayoutRuntimeError("Text2 required knob state could not be verified")
+    try:
+        return _dynamic_probe_values(methods)
+    except TextLayoutError:
+        raise
+    except Exception:
+        raise TextLayoutRuntimeError("Text2 required knob state could not be verified") from None
+
+
+def _dynamic_probe_values(methods: dict[str, Any]) -> bool:
+    if bool(methods["isAnimated"]()) or bool(methods["hasExpression"]()):
+        return True
+    animations = methods["animations"]()
+    if animations is not None and len(animations) > 0:
+        return True
+    key_count = methods["getNumKeys"]()
+    if isinstance(key_count, bool) or not isinstance(key_count, int) or key_count < 0:
+        raise TextLayoutRuntimeError("Text2 required knob state could not be verified")
+    return key_count > 0
 
 
 def _readback(node: Any) -> dict[str, Any]:

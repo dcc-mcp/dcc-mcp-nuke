@@ -1,6 +1,6 @@
 tools:
   - name: upsert_text2_label
-    description: Create or update one bounded Text2 label using global_font_scale with deterministic layout readback.
+    description: Create or update one bounded static Text2 label using global_font_scale with deterministic layout readback.
     input_schema:
       type: object
       required: [node_name, text, font_size_px, x, y, box_x, box_y, box_width, box_height]
