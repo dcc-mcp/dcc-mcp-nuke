@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from dcc_mcp_nuke.node_graph import connect_input, create_node, get_knob, list_node_graph, set_knob
+from dcc_mcp_nuke.node_graph import connect_input, create_node, delete_node, get_knob, list_node_graph, set_knob
 
 SKILL_ROOT = Path(__file__).parents[1] / "src" / "dcc_mcp_nuke" / "skills" / "nuke-node-graph"
 
@@ -135,6 +135,59 @@ def test_create_node_rejects_unknown_class_before_mutation():
     with pytest.raises(ValueError, match="node_class is not available"):
         create_node(nuke, "NoSuchNode")
 
+    assert nuke.nodes == []
+
+
+def test_create_node_recovers_one_partial_mutation_when_host_raises():
+    class MutateThenRaiseNuke(FakeNuke):
+        def createNode(self, node_class, inpanel=False):
+            super().createNode(node_class, inpanel=inpanel)
+            raise OSError("host failed after mutation")
+
+    nuke = MutateThenRaiseNuke([])
+
+    with pytest.raises(OSError, match="host failed after mutation"):
+        create_node(nuke, "Blur", name="SoftBlur")
+
+    assert nuke.nodes == []
+
+
+def test_create_node_preserves_ambiguous_partial_mutations_and_fails_closed():
+    class AmbiguousMutateThenRaiseNuke(FakeNuke):
+        def createNode(self, node_class, inpanel=False):
+            super().createNode(node_class, inpanel=inpanel)
+            self.nodes.append(FakeNode("ConcurrentBlur", "Blur"))
+            raise OSError("host failed after concurrent mutation")
+
+    nuke = AmbiguousMutateThenRaiseNuke([])
+
+    with pytest.raises(RuntimeError, match="Blur partial creation attribution is ambiguous"):
+        create_node(nuke, "Blur", name="SoftBlur")
+
+    assert len(nuke.nodes) == 2
+
+
+def test_delete_node_verifies_captured_identity_before_handle_invalidation():
+    class InvalidatingNode(FakeNode):
+        deleted = False
+
+        def name(self):
+            if self.deleted:
+                raise RuntimeError("invalid node handle")
+            return super().name()
+
+    class InvalidatingNuke(FakeNuke):
+        def delete(self, node):
+            self.deleted.append(node)
+            self.nodes.remove(node)
+            node.deleted = True
+
+    node = InvalidatingNode("Blur1", "Blur")
+    nuke = InvalidatingNuke([node])
+
+    result = delete_node(nuke, "Blur1")
+
+    assert result == {"name": "Blur1", "class": "Blur", "deleted": True}
     assert nuke.nodes == []
 
 

@@ -7,7 +7,11 @@ tools:
       additionalProperties: false
       properties:
         node_name: {type: string, minLength: 1, maxLength: 128, pattern: "^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$"}
-        text: {type: string, minLength: 1, maxLength: 4096}
+        text:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          pattern: '^[^\[\]\\\x00-\x1F\x7F-\x9F]*$'
         font_size_px: {type: number, minimum: 1.0, maximum: 4096.0}
         x: {type: integer, minimum: -1000000, maximum: 1000000}
         y: {type: integer, minimum: -1000000, maximum: 1000000}

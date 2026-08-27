@@ -21,7 +21,8 @@ metadata:
 
 Use `upsert_text2_label` for one named `Text2` node. It is idempotent: an
 existing `Text2` is updated, a missing node is created, and a same-name node of
-any other class is rejected. The tool accepts bounded plain text, a requested
+any other class is rejected. The tool accepts bounded Unicode plain text
+without brackets, backslashes, or control characters, plus a requested
 pixel size, graph position, text box, and fixed alignment enums. It does not
 accept a node class, Python, Tcl, scripts, callbacks, expressions, or UI input.
 
