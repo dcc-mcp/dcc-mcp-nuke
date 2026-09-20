@@ -37,10 +37,10 @@ tools:
                   type: object
                   properties:
                     name: {type: string}
-                    first_frame: {type: integer}
-                    last_frame: {type: integer}
-                    video_track_count: {type: integer}
-                    audio_track_count: {type: integer}
+                    first_frame: {type: [integer, "null"]}
+                    last_frame: {type: [integer, "null"]}
+                    video_track_count: {type: [integer, "null"]}
+                    audio_track_count: {type: [integer, "null"]}
         reason: {type: string}
     read_only: true
     destructive: false

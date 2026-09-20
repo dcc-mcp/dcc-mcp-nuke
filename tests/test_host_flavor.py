@@ -109,7 +109,7 @@ def test_studio_env_wins_over_nukex_because_studio_is_a_superset(monkeypatch):
     assert report.flavor == FLAVOR_NUKE_STUDIO
 
 
-def test_hiero_import_is_a_supporting_signal(monkeypatch):
+def test_hiero_import_is_reported_but_never_classifies(monkeypatch):
     monkeypatch.setattr(sys, "executable", "Nuke16.0")
     monkeypatch.delenv(ENV_FLAVOR_OVERRIDE, raising=False)
 
@@ -123,9 +123,13 @@ def test_hiero_import_is_a_supporting_signal(monkeypatch):
 
     report = detect_host_flavor(fake_nuke())
 
-    assert report.flavor == FLAVOR_NUKE_STUDIO
+    # An importable hiero module is diagnostic only. Classifying this host as
+    # nukestudio would unlock Studio-only tools whose APIs do not exist, so the
+    # flavor stays on the safe baseline while the observation is still reported.
+    assert report.flavor == FLAVOR_NUKE
     assert report.hiero_importable is True
-    assert report.signals == ("hiero-import",)
+    assert report.signals == ("baseline",)
+    assert CAPABILITY_STUDIO_TIMELINE not in report.capabilities
 
 
 def test_plain_nuke_falls_back_to_the_baseline(monkeypatch):

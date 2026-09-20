@@ -120,3 +120,36 @@ def test_host_flavor_audit_rejects_an_unknown_flavor(tmp_path):
     assert len(issues) == 1
     assert "nuke-future-host" in issues[0]
     assert "nuke-indie" in issues[0]
+
+
+def test_host_flavor_audit_rejects_a_mixed_declaration(tmp_path):
+    """A mixed declaration must fail even though normalizing it yields a valid gate.
+
+    ``normalize_host_flavors`` drops unknown entries, so ``nuke, nuke-indie``
+    normalizes to ``("nuke",)``. Auditing only the normalized result would let the
+    typo through and ship a manifest that silently disagrees with its intent.
+    """
+    from tools.skill_companion_audit import audit_host_flavor_metadata
+
+    skill_root = tmp_path / "nuke-mixed-host"
+    skill_root.mkdir()
+    (skill_root / "SKILL.md").write_text(
+        """---
+name: nuke-mixed-host
+description: Declares one known and one unknown flavor.
+metadata:
+  dcc-mcp:
+    dcc: nuke
+    host-flavors: "nuke, nuke-indie"
+---
+
+# Body
+""",
+        encoding="utf-8",
+    )
+
+    issues = audit_host_flavor_metadata(tmp_path)
+
+    assert len(issues) == 1
+    assert "nuke-mixed-host" in issues[0]
+    assert "nuke-indie" in issues[0]

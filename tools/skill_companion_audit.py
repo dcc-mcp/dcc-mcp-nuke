@@ -53,8 +53,14 @@ def audit_host_flavor_metadata(skills_root: Path) -> list[str]:
     A bundled skill may restrict itself with ``metadata.dcc-mcp.host-flavors``.
     Only values in :data:`dcc_mcp_nuke.host_flavor.HOST_FLAVORS` are meaningful;
     anything else would silently widen or narrow the gate, so it fails CI.
+
+    Every declared entry is validated individually. :func:`normalize_host_flavors`
+    deliberately drops unknown entries so runtime gating stays fail-closed, which
+    means it cannot be used here: a mixed declaration such as ``nuke, nuke-indie``
+    would normalize to a valid ``("nuke",)`` and pass an audit that only checks the
+    normalized result.
     """
-    from dcc_mcp_nuke.host_flavor import HOST_FLAVORS, SKILL_METADATA_KEY, normalize_host_flavors
+    from dcc_mcp_nuke.host_flavor import HOST_FLAVORS, SKILL_METADATA_KEY
 
     issues: list[str] = []
     for manifest_path in sorted(Path(skills_root).glob("*/SKILL.md")):
@@ -65,13 +71,32 @@ def audit_host_flavor_metadata(skills_root: Path) -> list[str]:
         if not isinstance(dcc_mcp, dict) or SKILL_METADATA_KEY not in dcc_mcp:
             continue
         declared = dcc_mcp[SKILL_METADATA_KEY]
-        normalized = normalize_host_flavors(declared)
-        if not normalized:
+        entries = _declared_flavor_entries(declared)
+        unknown = [entry for entry in entries if entry not in HOST_FLAVORS]
+        if unknown:
+            issues.append(
+                f"{skill_name} declares metadata.dcc-mcp.{SKILL_METADATA_KEY} with "
+                f"unrecognized flavor(s) {unknown!r} (expected one of {list(HOST_FLAVORS)})"
+            )
+        elif not entries:
             issues.append(
                 f"{skill_name} declares metadata.dcc-mcp.{SKILL_METADATA_KEY} without a "
                 f"recognized flavor: {declared!r} (expected one of {list(HOST_FLAVORS)})"
             )
     return issues
+
+
+def _declared_flavor_entries(declared: Any) -> list[str]:
+    """Return the individual flavor entries declared in a SKILL.md manifest."""
+    if declared is None:
+        return []
+    if isinstance(declared, str):
+        raw = [part.strip().lower() for part in declared.split(",")]
+    elif isinstance(declared, (list, tuple)):
+        raw = [str(item).strip().lower() for item in declared]
+    else:
+        raw = [str(declared).strip().lower()]
+    return [entry for entry in raw if entry]
 
 
 def _frontmatter(skill_md: Path) -> dict:

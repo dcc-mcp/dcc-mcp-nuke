@@ -195,8 +195,13 @@ def detect_host_flavor(nuke_module: Optional[Any] = None) -> HostFlavorReport:
     3. A ``studio`` substring in the executable name (``NukeStudio16.0``).
     4. ``nukex`` in ``nuke.env``.
     5. A ``nukex`` substring in the executable name (``NukeX16.0``).
-    6. ``hiero`` importable — a supporting signal, not a decisive one.
-    7. The ``nuke`` baseline.
+    6. The ``nuke`` baseline.
+
+    ``hiero`` importability is reported in :attr:`HostFlavorReport.hiero_importable`
+    for diagnostics but never selects a flavor: a non-Studio host can expose an
+    importable ``hiero`` module without the Studio capability surface, and
+    classifying it as ``nukestudio`` would unlock Studio-only tools whose APIs do
+    not exist. Falling back to ``nuke`` only hides those skills.
 
     Studio is evaluated before NukeX because Nuke Studio is a superset that may
     also advertise NukeX features.
@@ -219,8 +224,6 @@ def detect_host_flavor(nuke_module: Optional[Any] = None) -> HostFlavorReport:
         return _report(FLAVOR_NUKE_X, env, executable, hiero_importable, override_signals + ("nuke.env:nukex",))
     if "nukex" in executable:
         return _report(FLAVOR_NUKE_X, env, executable, hiero_importable, override_signals + ("executable:nukex",))
-    if hiero_importable:
-        return _report(FLAVOR_NUKE_STUDIO, env, executable, hiero_importable, override_signals + ("hiero-import",))
     signals = override_signals + ("baseline",)
     return _report(FLAVOR_NUKE, env, executable, hiero_importable, signals)
 
