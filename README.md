@@ -53,6 +53,58 @@ MCP server in Nuke and uses Nuke's main-thread execution API for scene tools.
 See [install.md](install.md) for the agent-first install, verify, upgrade, and
 receipt-driven uninstall workflow on Windows, macOS, and Linux.
 
+## Host flavors: Nuke, NukeX, and Nuke Studio
+
+One package covers all three Foundry entry points. Nuke, NukeX, and Nuke Studio
+ship from one installation, share one embedded Python interpreter and one
+`~/.nuke` plug-in profile, and install once. Core registers all three as
+executable stems of a single `dcc-type` (`nuke`), so there is no second
+package, entry point, or release channel to install.
+
+What differs between them is the feature surface available at runtime. The
+adapter classifies the running entry point as one of three host flavors and
+reports it as server capability metadata:
+
+```bash
+dcc-mcp-cli call nuke_diagnostics__host_flavor --dcc-type nuke --json '{}'
+```
+
+| Host flavor | Provides |
+|---|---|
+| `nuke` | Shared baseline: `compositing`, `node_graph`, `scripting` |
+| `nukex` | The same shared baseline |
+| `nukestudio` | Baseline plus `studio.timeline`, `studio.sequence`, `studio.project_bin`, `studio.conform`, `studio.track` |
+
+Detection prefers `nuke.env`, then the executable name, and treats an
+importable `hiero` module as a supporting signal rather than a decisive one.
+Set `DCC_MCP_NUKE_HOST_FLAVOR` only to override detection for a host that
+really runs that flavor; unrecognized values are ignored.
+
+### Studio-only skills are gated, not silently unavailable
+
+A bundled skill that needs the Studio surface declares it in its manifest:
+
+```yaml
+metadata:
+  dcc-mcp:
+    host-flavors: [nukestudio]
+```
+
+On a `nuke` or `nukex` session that skill stays discoverable, so an agent can
+still see the capability exists, but it will not load.
+`dcc-mcp-cli load-skill nuke-studio-timeline --dcc-type nuke` fails with an
+explicit veto naming both the required flavor and the current one, and calling
+the tool directly returns the same `capability_unavailable` error. A Studio
+skill never fails silently.
+
+`nuke-studio-timeline` is the first Studio skill. It inspects open projects,
+sequences, track counts, and frame range through the Hiero surface, read-only,
+and reports an explicit `studio_surface_unavailable` error when a Studio build
+does not expose the expected API instead of skipping it.
+
+Probe the host with `nuke_diagnostics__host_flavor` first when the entry point
+is unknown.
+
 ## Automated Houdini AOV compositing
 
 ![Automated Nuke AOV rebuild from a Houdini solar-system render](docs/images/nuke-houdini-aov-compositing.gif)
