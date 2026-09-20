@@ -82,7 +82,12 @@ def test_execute_python_rejects_tampered_materialized_content(tmp_path, monkeypa
     result = _execute_python(file_path=descriptor.file_path)
 
     assert result["success"] is False
-    assert "digest" in result["error"].lower()
+    # Core words this integrity failure as a digest mismatch up to 0.20.24 and
+    # as a content/metadata mismatch from 0.20.25 on. Assert the semantics of
+    # the rejection rather than one Core release's wording; the property that
+    # actually matters is that the tampered script never ran (below).
+    error = result["error"].lower()
+    assert "digest" in error or "does not match" in error
     assert nuke.execution_marker == "not-run"
 
 
