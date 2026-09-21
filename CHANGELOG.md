@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.16.0](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.15.0...v0.16.0) (2026-09-21)
+
+
+### Features
+
+* detect Nuke host flavor and gate Nuke Studio skills ([119589b](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/119589b1ed23c09e3ca0e006b318c93bdf06bd1e))
+
 ## [0.15.0](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.14.1...v0.15.0) (2026-08-27)
 
 
