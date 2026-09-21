@@ -47,6 +47,70 @@ def _manifest_actions(skills_root: Path) -> tuple[list[dict[str, Any]], set[str]
     return actions, names
 
 
+def audit_host_flavor_metadata(skills_root: Path) -> list[str]:
+    """Return errors for skills that declare an unknown host flavor.
+
+    A bundled skill may restrict itself with ``metadata.dcc-mcp.host-flavors``.
+    Only values in :data:`dcc_mcp_nuke.host_flavor.HOST_FLAVORS` are meaningful;
+    anything else would silently widen or narrow the gate, so it fails CI.
+
+    Every declared entry is validated individually. :func:`normalize_host_flavors`
+    deliberately drops unknown entries so runtime gating stays fail-closed, which
+    means it cannot be used here: a mixed declaration such as ``nuke, nuke-indie``
+    would normalize to a valid ``("nuke",)`` and pass an audit that only checks the
+    normalized result.
+    """
+    from dcc_mcp_nuke.host_flavor import HOST_FLAVORS, SKILL_METADATA_KEY
+
+    issues: list[str] = []
+    for manifest_path in sorted(Path(skills_root).glob("*/SKILL.md")):
+        skill_name = manifest_path.parent.name
+        payload = _frontmatter(manifest_path)
+        metadata = payload.get("metadata") or {}
+        dcc_mcp = metadata.get("dcc-mcp") if isinstance(metadata, dict) else None
+        if not isinstance(dcc_mcp, dict) or SKILL_METADATA_KEY not in dcc_mcp:
+            continue
+        declared = dcc_mcp[SKILL_METADATA_KEY]
+        entries = _declared_flavor_entries(declared)
+        unknown = [entry for entry in entries if entry not in HOST_FLAVORS]
+        if unknown:
+            issues.append(
+                f"{skill_name} declares metadata.dcc-mcp.{SKILL_METADATA_KEY} with "
+                f"unrecognized flavor(s) {unknown!r} (expected one of {list(HOST_FLAVORS)})"
+            )
+        elif not entries:
+            issues.append(
+                f"{skill_name} declares metadata.dcc-mcp.{SKILL_METADATA_KEY} without a "
+                f"recognized flavor: {declared!r} (expected one of {list(HOST_FLAVORS)})"
+            )
+    return issues
+
+
+def _declared_flavor_entries(declared: Any) -> list[str]:
+    """Return the individual flavor entries declared in a SKILL.md manifest."""
+    if declared is None:
+        return []
+    if isinstance(declared, str):
+        raw = [part.strip().lower() for part in declared.split(",")]
+    elif isinstance(declared, (list, tuple)):
+        raw = [str(item).strip().lower() for item in declared]
+    else:
+        raw = [str(declared).strip().lower()]
+    return [entry for entry in raw if entry]
+
+
+def _frontmatter(skill_md: Path) -> dict:
+    """Return the parsed YAML frontmatter of a SKILL.md, or ``{}``."""
+    lines = skill_md.read_text(encoding="utf-8").splitlines()
+    if not lines or lines[0].strip() != "---":
+        return {}
+    for index in range(1, len(lines)):
+        if lines[index].strip() == "---":
+            payload = yaml.safe_load("\n".join(lines[1:index]))
+            return payload if isinstance(payload, dict) else {}
+    return {}
+
+
 def audit_companion_references(skills_root: Path) -> list[str]:
     """Return errors for description references that lack registered tools."""
     actions, registered_names = _manifest_actions(Path(skills_root))
@@ -62,4 +126,4 @@ def audit_companion_references(skills_root: Path) -> list[str]:
     return issues
 
 
-__all__ = ["audit_companion_references"]
+__all__ = ["audit_companion_references", "audit_host_flavor_metadata"]

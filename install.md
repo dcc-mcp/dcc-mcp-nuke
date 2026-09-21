@@ -41,6 +41,44 @@ The installer checks the selected Nuke version, target interpreter, adapter
 version, Core floor, `NUKE_PATH`, profile, existing receipt, and partial state
 before writing anything. A Python major/minor mismatch fails closed.
 
+## Nuke, NukeX, and Nuke Studio
+
+All three entry points share one installation, one embedded Python
+interpreter, and one `~/.nuke` plug-in profile, so install once. Point
+`--dcc-path` at whichever executable you want the installer to preflight; the
+managed block it writes calls `nuke.pluginAddPath()` once and is picked up by
+`Nuke`, `NukeX`, and `Nuke Studio` alike. The receipt stays a single
+`dcc_type=nuke` entry, and the shared `init.py` still holds exactly one
+managed block.
+
+Confirm which entry point the adapter detected after install:
+
+```text
+dcc-mcp-cli call nuke_diagnostics__host_flavor --dcc-type nuke --json '{}'
+```
+
+Studio-only skills such as `nuke-studio-timeline` are gated on the
+`nukestudio` host flavor. On a plain Nuke or NukeX session they stay
+discoverable but refuse to load with an explicit `capability_unavailable`
+error. The README documents the full flavor and capability table.
+
+### Standalone Hiero and HieroPlayer are out of scope
+
+Standalone Hiero and HieroPlayer processes are a separate product family. They
+resolve their own plug-in profile rather than `~/.nuke` and are not expected to
+provide the `nuke` module this adapter's managed block imports, so they are
+**not** covered by this package. Installing into them is unsupported, and this
+repository does not ship a second adapter for them.
+
+Revisit a separate package only if all of the following become true:
+
+- A supported Foundry release ships Hiero or HieroPlayer without the `nuke`
+  module that the managed block depends on.
+- Foundry documents a profile other than `~/.nuke` as the only supported
+  plug-in path for those processes.
+- A supported workflow requires timeline, conform, or project-bin control from
+  a standalone Hiero process rather than from Nuke Studio.
+
 ## Agent quick path
 
 Planning is the default and does not mutate the profile:

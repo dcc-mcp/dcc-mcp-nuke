@@ -8,6 +8,7 @@ from dcc_mcp_core.server_base import DccServerBase
 
 from dcc_mcp_nuke.__version__ import __version__
 from dcc_mcp_nuke.dispatcher import NukeDispatcher
+from dcc_mcp_nuke.host_flavor import HostFlavorGate, HostFlavorReport, detect_host_flavor
 
 DEFAULT_PORT = 0
 SERVER_NAME = "dcc-mcp-nuke"
@@ -38,6 +39,47 @@ class NukeMcpServer(DccServerBase):
         except Exception:
             self._host_dispatcher.stop()
             raise
+        self._host_flavor_report = detect_host_flavor()
+        self._host_flavor_gate = HostFlavorGate(self._host_flavor_report)
+        self._publish_host_flavor_metadata()
+        self.set_skill_load_transform(self._host_flavor_gate)
+
+    @property
+    def host_flavor_report(self) -> HostFlavorReport:
+        """Host flavor classification captured when this server was built."""
+        return self._host_flavor_report
+
+    @property
+    def host_flavor(self) -> str:
+        """Running host flavor: ``nuke``, ``nukex``, or ``nukestudio``."""
+        return self._host_flavor_report.flavor
+
+    def _publish_host_flavor_metadata(self) -> None:
+        """Advertise the host flavor through gateway instance metadata.
+
+        Best effort only: a metadata backend that refuses the update must never
+        stop the adapter from serving.
+        """
+        metadata = self._host_flavor_report.to_instance_metadata()
+        config = getattr(self, "_config", None)
+        existing = getattr(config, "instance_metadata", None)
+        if isinstance(existing, dict):
+            try:
+                updated = dict(existing)
+                updated.update(metadata)
+                config.instance_metadata = updated
+            except Exception:
+                try:
+                    existing.update(metadata)
+                except Exception:
+                    pass
+        handle = getattr(self, "_handle", None)
+        publish = getattr(handle, "update_gateway_metadata", None)
+        if callable(publish):
+            try:
+                publish(metadata)
+            except Exception:
+                pass
 
     def stop(self) -> None:
         """Stop HTTP serving before detaching the Nuke UI queue pump."""
