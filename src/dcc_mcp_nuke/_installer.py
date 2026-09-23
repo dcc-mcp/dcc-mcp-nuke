@@ -105,13 +105,17 @@ def _schema_const(document: object) -> Optional[int]:
     the schema with a bare ``json.loads`` -- no type and no digest validation -- so valid JSON of
     the wrong shape is reachable, and a chained ``.get()`` would raise AttributeError from a
     caller whose ``except`` does not cover it.
+
+    A non-positive const is malformed too. Both callers write the result straight into the
+    report's ``schema_version`` field, so accepting ``0`` or a negative value would stamp it onto
+    every report instead of degrading to the fallback.
     """
     node: Any = document
     for key in ("properties", "schema_version", "const"):
         if not isinstance(node, Mapping):
             return None
         node = node.get(key)
-    if isinstance(node, bool) or not isinstance(node, int):
+    if isinstance(node, bool) or not isinstance(node, int) or node < 1:
         return None
     return node
 

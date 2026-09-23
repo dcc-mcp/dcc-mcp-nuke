@@ -657,6 +657,8 @@ def test_ci_core_latest_job_resolves_a_real_core_version() -> None:
         {"type": "object", "properties": {"schema_version": "not-an-object"}},
         {"type": "object", "properties": {"schema_version": {"const": "1"}}},
         {"type": "object", "properties": {"schema_version": {"const": True}}},
+        {"type": "object", "properties": {"schema_version": {"const": 0}}},
+        {"type": "object", "properties": {"schema_version": {"const": -1}}},
         {"type": "object", "properties": "not-an-object"},
         {"type": "object"},
     ],
@@ -679,6 +681,8 @@ def test_malformed_schema_document_degrades_to_the_fallback(monkeypatch, documen
     "document",
     [
         {"type": "object", "properties": {"schema_version": "not-an-object"}},
+        {"type": "object", "properties": {"schema_version": {"const": 0}}},
+        {"type": "object", "properties": {"schema_version": {"const": -1}}},
         {"type": "object", "properties": "not-an-object"},
         {"type": "object"},
     ],
