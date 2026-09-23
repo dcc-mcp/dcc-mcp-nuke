@@ -82,16 +82,42 @@ def _validate_core_install_contract() -> dict[str, Any]:
     # Core 0.20.34 moved the artifact to v2 while leaving the report's const at 1, because v2
     # only adds the optional ``catalog`` object. Equating the two made this module fail to
     # import at all on 0.20.34 rather than merely emitting a rejected report.
-    declared = schema.get("properties", {}).get("schema_version", {}).get("const") if isinstance(schema, dict) else None
+    #
+    # Walk to the const one node at a time: Core at this adapter's floor loads the schema with
+    # a bare ``json.loads`` -- no type and no digest validation -- so a wrong-shaped document is
+    # reachable. A chained lookup would raise AttributeError here instead of failing the
+    # contract, and at import time that takes the whole adapter down.
+    declared = _schema_const(schema)
     if (
         not isinstance(schema, dict)
         or schema.get("type") != "object"
-        or isinstance(declared, bool)
-        or not isinstance(declared, int)
+        or declared is None
         or not required.issubset(set(schema.get("required", [])))
     ):
         raise RuntimeError("The official Core Install SOP schema is unavailable or incompatible.")
     return schema
+
+
+def _schema_const(document: object) -> Optional[int]:
+    """Return the ``schema_version`` const a schema document declares, or ``None``.
+
+    Every node on the path is checked before it is traversed. Core at this adapter's floor loads
+    the schema with a bare ``json.loads`` -- no type and no digest validation -- so valid JSON of
+    the wrong shape is reachable, and a chained ``.get()`` would raise AttributeError from a
+    caller whose ``except`` does not cover it.
+
+    A non-positive const is malformed too. Both callers write the result straight into the
+    report's ``schema_version`` field, so accepting ``0`` or a negative value would stamp it onto
+    every report instead of degrading to the fallback.
+    """
+    node: Any = document
+    for key in ("properties", "schema_version", "const"):
+        if not isinstance(node, Mapping):
+            return None
+        node = node.get(key)
+    if isinstance(node, bool) or not isinstance(node, int) or node < 1:
+        return None
+    return node
 
 
 def report_schema_version() -> int:
@@ -112,9 +138,12 @@ def report_schema_version() -> int:
     try:
         document = load_install_sop_schema()
     except (RuntimeError, OSError, ValueError):
+        # Core signals schema_unavailable / schema_digest_mismatch with RuntimeError,
+        # unreadable files with OSError, and a corrupt document with ValueError. None of them
+        # may stop this CLI from reporting.
         return FALLBACK_REPORT_SCHEMA_VERSION
-    declared = document.get("properties", {}).get("schema_version", {}).get("const")
-    if isinstance(declared, bool) or not isinstance(declared, int):
+    declared = _schema_const(document)
+    if declared is None:
         return FALLBACK_REPORT_SCHEMA_VERSION
     return declared
 
