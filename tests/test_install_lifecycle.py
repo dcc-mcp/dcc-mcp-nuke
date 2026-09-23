@@ -604,12 +604,25 @@ def test_report_schema_version_ignores_cores_artifact_revision() -> None:
     assert installer.report_schema_version() == 1
 
 
+@pytest.mark.parametrize(
+    "error",
+    [
+        RuntimeError("Install SOP schema integrity error: schema_digest_mismatch"),
+        OSError("schema file unreadable"),
+        ValueError("schema document is not valid JSON"),
+    ],
+)
 def test_report_schema_version_falls_back_when_the_document_cannot_be_read(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, error: Exception
 ) -> None:
-    """An unhealthy Core must not stop the CLI from emitting a report."""
+    """An unhealthy Core must not stop the CLI from emitting a report.
+
+    Core signals schema_unavailable / schema_digest_mismatch with RuntimeError, unreadable
+    files with OSError, and a corrupt document with ValueError. All three are reachable and all
+    three must degrade, so the read failure is parametrized rather than pinned to one shape.
+    """
     installer = _installer()
-    monkeypatch.setattr(installer, "load_install_sop_schema", _raise(OSError("schema file unreadable")))
+    monkeypatch.setattr(installer, "load_install_sop_schema", _raise(error))
 
     assert installer.report_schema_version() == installer.FALLBACK_REPORT_SCHEMA_VERSION
 
@@ -677,3 +690,22 @@ def test_malformed_schema_document_fails_the_import_contract(monkeypatch, docume
 
     with pytest.raises(RuntimeError, match="unavailable or incompatible"):
         installer._validate_core_install_contract()
+
+
+def test_chained_lookup_really_does_raise_on_this_document():
+    """Teeth: the malformed cases above must break the shape this fix replaced.
+
+    An assertion like "the new code returns the fallback" is true for almost any implementation,
+    including one that never had the bug. This pins the mechanism instead: on these documents the
+    previous chained lookup raises AttributeError, and the guarded walk returns None. Without the
+    first half, the other tests in this group would pass against a no-op and prove nothing.
+    """
+    installer = _installer()
+    malformed = {"type": "object", "properties": []}
+
+    with pytest.raises(AttributeError):
+        # Exactly what _validate_core_install_contract() used to do.
+        malformed.get("properties", {}).get("schema_version", {}).get("const")
+
+    assert installer._schema_const(malformed) is None
+    assert installer.report_schema_version.__name__ == "report_schema_version"
