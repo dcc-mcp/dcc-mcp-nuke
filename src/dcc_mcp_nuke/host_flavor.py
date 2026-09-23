@@ -215,7 +215,6 @@ def detect_host_flavor(nuke_module: Optional[Any] = None) -> HostFlavorReport:
     if override is not None:
         return _report(override, env, executable, hiero_importable, override_signals)
 
-    signals = ()
     if _flag(env, _STUDIO_ENV_KEYS):
         return _report(FLAVOR_NUKE_STUDIO, env, executable, hiero_importable, override_signals + ("nuke.env:studio",))
     if "studio" in executable:
