@@ -636,3 +636,44 @@ def test_ci_core_latest_job_resolves_a_real_core_version() -> None:
     script = resolve[0]["run"]
     assert "exit 1" in script, "empty version resolution must fail the job"
     assert "::error::" in script
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        {"type": "object", "properties": {"schema_version": "not-an-object"}},
+        {"type": "object", "properties": {"schema_version": {"const": "1"}}},
+        {"type": "object", "properties": {"schema_version": {"const": True}}},
+        {"type": "object", "properties": "not-an-object"},
+        {"type": "object"},
+    ],
+)
+def test_malformed_schema_document_degrades_to_the_fallback(monkeypatch, document):
+    """A wrong-shaped schema must not raise above the caller's own except.
+
+    Core at this adapter's floor loads the schema with a bare ``json.loads`` -- no type and no
+    digest validation -- so valid JSON of the wrong shape is reachable. Reading the const with a
+    chained lookup raises AttributeError from a place the caller does not guard, which at import
+    time takes the whole adapter down rather than degrading to the fallback.
+    """
+    installer = _installer()
+    monkeypatch.setattr(installer, "load_install_sop_schema", lambda: document)
+
+    assert installer.report_schema_version() == installer.FALLBACK_REPORT_SCHEMA_VERSION
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        {"type": "object", "properties": {"schema_version": "not-an-object"}},
+        {"type": "object", "properties": "not-an-object"},
+        {"type": "object"},
+    ],
+)
+def test_malformed_schema_document_fails_the_import_contract(monkeypatch, document):
+    """The import-time contract must reject a wrong-shaped document, not raise AttributeError."""
+    installer = _installer()
+    monkeypatch.setattr(installer, "load_install_sop_schema", lambda: document)
+
+    with pytest.raises(RuntimeError, match="unavailable or incompatible"):
+        installer._validate_core_install_contract()
