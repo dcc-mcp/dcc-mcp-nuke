@@ -34,7 +34,6 @@ from dcc_mcp_core.deployment import (
     INSTALL_EXIT_PREFLIGHT,
     INSTALL_EXIT_REQUIRES_RESTART,
     INSTALL_EXIT_VERIFY,
-    INSTALL_SOP_SCHEMA_VERSION,
     load_install_sop_schema,
 )
 
@@ -43,6 +42,16 @@ from dcc_mcp_nuke.__version__ import __version__
 DCC_TYPE = "nuke"
 COMMAND = "dcc-mcp-nuke"
 MIN_CORE_VERSION = "0.20.14"
+RECEIPT_SCHEMA_VERSION = 1
+# Last-resort value for the report's own ``schema_version`` field, used only when Core's
+# schema document cannot be read at all. See ``report_schema_version()``.
+#
+# This is deliberately NOT Core's ``INSTALL_SOP_SCHEMA_VERSION``. That constant is the
+# revision of the published schema *artifact* (``-vN``); Core documents it as separate from
+# the report field, which stays at 1 because v2 only adds the optional ``catalog`` object.
+# The two values coincided at 1 through Core 0.20.33, which is why comparing the two looked
+# correct right up until 0.20.34 bumped the artifact revision to 2.
+FALLBACK_REPORT_SCHEMA_VERSION = 1
 MIN_NUKE_VERSION = (14, 0)
 _PROFILE_ENV = "DCC_MCP_NUKE_PROFILE"
 _PYTHON_ENV = "DCC_MCP_INSTALL_PYTHON"
@@ -67,14 +76,47 @@ def _validate_core_install_contract() -> dict[str, Any]:
         "receipt_path",
         "verify",
     }
+    # The contract checked here is that Core declares a ``schema_version`` const, not that the
+    # const equals Core's ``INSTALL_SOP_SCHEMA_VERSION``. That constant is the revision of the
+    # published schema *artifact* (``-vN``), a separate quantity from the report's own field:
+    # Core 0.20.34 moved the artifact to v2 while leaving the report's const at 1, because v2
+    # only adds the optional ``catalog`` object. Equating the two made this module fail to
+    # import at all on 0.20.34 rather than merely emitting a rejected report.
+    declared = schema.get("properties", {}).get("schema_version", {}).get("const") if isinstance(schema, dict) else None
     if (
         not isinstance(schema, dict)
         or schema.get("type") != "object"
-        or schema.get("properties", {}).get("schema_version", {}).get("const") != INSTALL_SOP_SCHEMA_VERSION
+        or isinstance(declared, bool)
+        or not isinstance(declared, int)
         or not required.issubset(set(schema.get("required", [])))
     ):
         raise RuntimeError("The official Core Install SOP schema is unavailable or incompatible.")
     return schema
+
+
+def report_schema_version() -> int:
+    """Return the ``schema_version`` value every emitted report must carry.
+
+    Core enforces this value as the ``const`` of the ``schema_version`` property in the schema
+    document it ships, so that document is the authoritative source -- emitting anything else
+    produces reports Core's own validator rejects.
+
+    Core's exported ``INSTALL_SOP_SCHEMA_VERSION`` is deliberately NOT used. It is the revision
+    of the published schema *artifact* (``-vN``), a separate quantity from the report's own
+    field; the two merely happened to agree while both were 1. Populating the report from that
+    constant is the defect this function exists to avoid.
+
+    The contract check at import time already guarantees the document declares a const, so this
+    only needs to read it; the fallback covers a document that changes shape underneath us.
+    """
+    try:
+        document = load_install_sop_schema()
+    except (RuntimeError, OSError, ValueError):
+        return FALLBACK_REPORT_SCHEMA_VERSION
+    declared = document.get("properties", {}).get("schema_version", {}).get("const")
+    if isinstance(declared, bool) or not isinstance(declared, int):
+        return FALLBACK_REPORT_SCHEMA_VERSION
+    return declared
 
 
 _validate_core_install_contract()
@@ -360,7 +402,7 @@ def _installation_state(
         receipt = _load_json(receipt_path)
     except LifecycleFailure:
         return "partial", None
-    if receipt.get("schema_version") != 1 or receipt.get("dcc_type") != DCC_TYPE:
+    if receipt.get("schema_version") != RECEIPT_SCHEMA_VERSION or receipt.get("dcc_type") != DCC_TYPE:
         return "partial", receipt
     files = receipt.get("files")
     if not isinstance(files, list) or not files:
@@ -442,7 +484,7 @@ def _resolve_context(
 
 def _base_result(ctx: InstallContext, *, status: str) -> dict[str, Any]:
     return {
-        "schema_version": INSTALL_SOP_SCHEMA_VERSION,
+        "schema_version": report_schema_version(),
         "status": status,
         "dcc_type": DCC_TYPE,
         "adapter_version": __version__,
@@ -518,7 +560,7 @@ def _receipt(ctx: InstallContext, installed_at: float) -> dict[str, Any]:
     previous = ctx.receipt or {}
     previous_registration = previous.get("registration") if isinstance(previous.get("registration"), dict) else {}
     return {
-        "schema_version": 1,
+        "schema_version": RECEIPT_SCHEMA_VERSION,
         "dcc_type": DCC_TYPE,
         "adapter_version": __version__,
         "core_version": ctx.core_version,
@@ -954,7 +996,7 @@ def _failure_result(
     if python_path or environ.get(_PYTHON_ENV):
         retry.extend(["--python", python_path or environ[_PYTHON_ENV]])
     result = {
-        "schema_version": INSTALL_SOP_SCHEMA_VERSION,
+        "schema_version": report_schema_version(),
         "status": "failed",
         "dcc_type": DCC_TYPE,
         "adapter_version": __version__,

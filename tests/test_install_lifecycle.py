@@ -12,6 +12,24 @@ import pytest
 import yaml
 from jsonschema import Draft202012Validator
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _core_upper_bound() -> str:
+    """The Core upper bound this adapter ships, read from the single source of truth."""
+    import re as _re
+
+    source = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    match = _re.search(r'"dcc-mcp-core>=[0-9][0-9A-Za-z.]*,<(?P<upper>[0-9][0-9A-Za-z.]*)"', source)
+    assert match is not None
+    return match.group("upper")
+
+
+def _installer():
+    from dcc_mcp_nuke import _installer
+
+    return _installer
+
 
 def test_install_defaults_to_a_non_mutating_agent_plan(tmp_path: Path) -> None:
     host_dir = tmp_path / "Nuke16.0v9"
@@ -49,7 +67,7 @@ def test_install_defaults_to_a_non_mutating_agent_plan(tmp_path: Path) -> None:
     validator = Draft202012Validator(load_install_sop_schema())
     validator.check_schema(validator.schema)
     validator.validate(result)
-    assert result["schema_version"] == 1
+    assert result["schema_version"] == _installer().report_schema_version()
     assert result["status"] == "planned"
     assert result["dcc_type"] == "nuke"
     assert result["plan"]["host_version"] == "16.0v9"
@@ -143,7 +161,7 @@ def test_distribution_exposes_the_standard_lifecycle_entry_point() -> None:
 
     assert "[project.scripts]" in pyproject
     assert 'dcc-mcp-nuke = "dcc_mcp_nuke.install_cli:main"' in pyproject
-    assert "dcc-mcp-core>=0.20.14,<1.0.0" in pyproject
+    assert "dcc-mcp-core>=0.20.14,<%s" % _core_upper_bound() in pyproject
 
 
 def test_install_contract_uses_only_the_official_core_deployment_schema() -> None:
@@ -257,6 +275,10 @@ def test_install_runbook_covers_lifecycle_platforms_and_nuke_preflight() -> None
     assert "Nuke 14" in runbook and "Python 3.9" in runbook
     assert "Nuke 16" in runbook and "Python 3.11" in runbook
     assert "bootstrap" in runbook.lower()
+    # The runbook advertises the Core range users must install, so it has to agree with the
+    # pin that actually guards them. A stale ``<1.0.0`` here tells users a Core minor is
+    # supported right up to the point pip refuses to install it.
+    assert f"`>=0.20.14,<{_core_upper_bound()}`" in runbook
 
 
 def test_ci_runs_the_install_lifecycle_smoke_explicitly() -> None:
@@ -557,3 +579,60 @@ def test_preflight_discovers_one_standard_windows_nuke_install(
     assert main(["install", "--json", "--python", sys.executable, "--dry-run"]) == 0
     planned = json.loads(capsys.readouterr().out)
     assert planned["plan"]["host_path"] == str(host.resolve())
+
+
+def test_core_install_contract_accepts_a_revision_bump_of_the_published_artifact() -> None:
+    """The import-time contract must not equate the report const with the artifact revision.
+
+    Core 0.20.34 publishes the ``-v2`` schema artifact while the report's ``schema_version``
+    const stays at 1, because v2 only adds the optional ``catalog`` object. Equating the two
+    made this module raise at import on 0.20.34 -- the adapter was unusable, not merely
+    emitting a rejected report.
+    """
+    installer = _installer()
+    schema = installer._validate_core_install_contract()
+
+    declared = schema["properties"]["schema_version"]["const"]
+    assert declared == installer.report_schema_version()
+    assert declared == 1
+
+
+def test_report_schema_version_ignores_cores_artifact_revision() -> None:
+    """The report field follows the published document's const, not Core's exported constant."""
+    installer = _installer()
+
+    assert installer.report_schema_version() == 1
+
+
+def test_report_schema_version_falls_back_when_the_document_cannot_be_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unhealthy Core must not stop the CLI from emitting a report."""
+    installer = _installer()
+    monkeypatch.setattr(installer, "load_install_sop_schema", _raise(OSError("schema file unreadable")))
+
+    assert installer.report_schema_version() == installer.FALLBACK_REPORT_SCHEMA_VERSION
+
+
+def _raise(error: Exception):
+    def _raiser():
+        raise error
+
+    return _raiser
+
+
+def test_core_dependency_stays_pinned_below_the_next_minor() -> None:
+    """``<1.0.0`` admits any future Core minor, which is how 0.20.34 shipped unannounced."""
+    assert _core_upper_bound() == "0.21.0"
+
+
+def test_ci_core_latest_job_resolves_a_real_core_version() -> None:
+    """The early-warning job must fail loudly rather than test an empty pin."""
+    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
+    job = workflow["jobs"]["core-latest"]
+    resolve = [step for step in job["steps"] if step.get("id") == "core"]
+    assert resolve, "core-latest job has no version resolution step"
+
+    script = resolve[0]["run"]
+    assert "exit 1" in script, "empty version resolution must fail the job"
+    assert "::error::" in script

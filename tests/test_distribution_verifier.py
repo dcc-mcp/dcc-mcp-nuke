@@ -43,7 +43,7 @@ def test_distribution_verifier_rejects_the_removed_compatibility_shim(tmp_path: 
         archive.writestr("dcc_mcp_nuke/_install_contract.py", "fallback")
         archive.writestr(
             "dcc_mcp_nuke-0.14.0.dist-info/METADATA",
-            "Name: dcc-mcp-nuke\nVersion: 0.14.0\nRequires-Dist: dcc-mcp-core<1.0.0,>=0.20.14\n",
+            "Name: dcc-mcp-nuke\nVersion: 0.14.0\nRequires-Dist: dcc-mcp-core<0.21.0,>=0.20.14\n",
         )
     sdist = dist / "dcc_mcp_nuke-0.14.0.tar.gz"
     with tarfile.open(sdist, "w:gz") as archive:
