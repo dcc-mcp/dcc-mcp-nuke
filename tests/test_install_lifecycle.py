@@ -275,6 +275,10 @@ def test_install_runbook_covers_lifecycle_platforms_and_nuke_preflight() -> None
     assert "Nuke 14" in runbook and "Python 3.9" in runbook
     assert "Nuke 16" in runbook and "Python 3.11" in runbook
     assert "bootstrap" in runbook.lower()
+    # The runbook advertises the Core range users must install, so it has to agree with the
+    # pin that actually guards them. A stale ``<1.0.0`` here tells users a Core minor is
+    # supported right up to the point pip refuses to install it.
+    assert f"`>=0.20.14,<{_core_upper_bound()}`" in runbook
 
 
 def test_ci_runs_the_install_lifecycle_smoke_explicitly() -> None:

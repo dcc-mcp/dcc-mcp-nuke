@@ -9,8 +9,11 @@ Foundry Nuke. The adapter follows the
 - **Nuke:** Nuke, NukeX, or Nuke Studio 14.0 or newer.
 - **Python:** the interpreter that matches the selected Nuke installation; an
   unrelated system Python cannot make the package importable inside Nuke.
-- **dcc-mcp-core:** `>=0.20.14,<1.0.0` in that same interpreter. This is the
+- **dcc-mcp-core:** `>=0.20.14,<0.21.0` in that same interpreter. This is the
   first release that owns the adapter Install SOP schema and deployment API.
+  The upper bound is deliberate: it must match the pin in `pyproject.toml`, so
+  an untested Core minor fails at dependency resolution instead of at import
+  inside a user's Nuke.
 - **Platforms:** Windows, macOS, and Linux. Nuke's own qualified operating
   systems and licensing requirements still apply.
 - **Permissions:** write access to the selected Nuke plug-in profile, normally
