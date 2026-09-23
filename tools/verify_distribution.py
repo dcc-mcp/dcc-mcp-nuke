@@ -20,6 +20,20 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError, ValidationError
 from packaging.requirements import Requirement
 
+
+def _core_upper_bound() -> str:
+    """Read the Core upper bound from pyproject rather than restating it here."""
+    import re
+
+    source = (Path(__file__).resolve().parent.parent / "pyproject.toml").read_text(encoding="utf-8")
+    match = re.search(r'"dcc-mcp-core>=[0-9][0-9A-Za-z.]*,<(?P<upper>[0-9][0-9A-Za-z.]*)"', source)
+    if match is None:
+        raise RuntimeError("could not read the dcc-mcp-core bound from pyproject.toml")
+    return match.group("upper")
+
+
+_CORE_UPPER_BOUND = _core_upper_bound()
+
 _CORE_CONTRACT_PROBE = """
 import json
 
@@ -75,9 +89,9 @@ def inspect_distributions(dist_dir: Path, core_version: str) -> Path:
         metadata = BytesParser(policy=default).parsebytes(archive.read(metadata_names[0]))
     requirements = [Requirement(value) for value in metadata.get_all("Requires-Dist", [])]
     core_requirements = [requirement for requirement in requirements if requirement.name == "dcc-mcp-core"]
-    expected = {f">={core_version}", "<1.0.0"}
+    expected = {f">={core_version}", f"<{_CORE_UPPER_BOUND}"}
     if len(core_requirements) != 1 or {str(item) for item in core_requirements[0].specifier} != expected:
-        raise DistributionContractError(f"wheel must require dcc-mcp-core>={core_version},<1.0.0")
+        raise DistributionContractError(f"wheel must require dcc-mcp-core>={core_version},<{_CORE_UPPER_BOUND}")
 
     with tarfile.open(sdist, "r:gz") as archive:
         sdist_names = _safe_names(archive.getnames())
