@@ -36,13 +36,13 @@ class NukeMcpServer(DccServerBase):
         )
         try:
             super().__init__(options=options)
+            self._host_flavor_report = detect_host_flavor()
+            self._host_flavor_gate = HostFlavorGate(self._host_flavor_report)
+            self._publish_host_flavor_metadata()
+            self.set_skill_load_transform(self._host_flavor_gate)
         except Exception:
             self._host_dispatcher.stop()
             raise
-        self._host_flavor_report = detect_host_flavor()
-        self._host_flavor_gate = HostFlavorGate(self._host_flavor_report)
-        self._publish_host_flavor_metadata()
-        self.set_skill_load_transform(self._host_flavor_gate)
 
     @property
     def host_flavor_report(self) -> HostFlavorReport:
