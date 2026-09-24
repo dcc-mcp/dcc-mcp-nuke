@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.16.1](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.16.0...v0.16.1) (2026-09-24)
+
+
+### Bug Fixes
+
+* **install:** follow a non-positive schema const instead of rejecting it ([#66](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/66)) ([dc8869b](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/dc8869bc4abd72be3c835774807757b0858fa5f5))
+* **install:** stop equating the report version with Core's schema artifact revision ([#64](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/64)) ([b2eee78](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/b2eee7846a0d485fa94515085363bfdd4b4c1279))
+* **install:** walk to the schema const instead of chaining .get() ([cf29b9d](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/cf29b9d46db174756e2f6b1cecf2d0ca9729e487))
+* stop host dispatcher when flavor setup fails ([#62](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/62)) ([ff1d634](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/ff1d634cf3e1c2dc7c8b21ed5af8d88d3bf1762f))
+
 ## [0.16.0](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.15.0...v0.16.0) (2026-09-21)
 
 
