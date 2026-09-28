@@ -19,7 +19,9 @@ python tools/verify_distribution.py dist --core-version 0.20.14
 ```
 
 - **Python:** `>=3.9` (CI matrix 3.9–3.13; Windows/macOS exclude 3.9). Ruff target `py39`, line-length 120.
-- Adapted for `dcc-mcp-core>=0.20.14,<0.21.0`. The upper bound is deliberate — Core `0.20.34` changed the Install SOP schema and made the module fail to import. **Do not widen the pin without running `tests/test_install_lifecycle.py`.**
+- Adapted for `dcc-mcp-core>=0.20.14,<0.21.0`. The upper bound is deliberate: it pins **below Core’s next minor**, so a new Core minor has to be promoted here on purpose rather than arriving unannounced.
+- Core `0.20.34` is **inside** the range and works: `_installer.py` keeps Core’s Install SOP artifact revision (`INSTALL_SOP_SCHEMA_VERSION`, 2) separate from the report’s own `schema_version` const (1), which `tests/test_install_lifecycle.py` asserts.
+- **Do not widen the pin without running `tests/test_install_lifecycle.py`.**
 - CI also runs a `core-latest compatibility` job against the newest published Core (outside the pin) so upcoming Core minors surface as warnings instead of silent breakage.
 
 ## Repo layout
@@ -46,15 +48,21 @@ dcc-mcp-cli call nuke_diagnostics__host_flavor --dcc-type nuke --json '{}'
 ## Release
 
 - release-please drives versioning from Conventional Commits on `main`.
-- `feat:` → minor, `fix:` → patch, `chore:`/`docs:`/`ci:` → **no release**.
+- `feat:` → minor, `fix:` → patch. Every other prefix still lands on **patch**:
+  `DefaultVersioningStrategy.determineReleaseType()` falls back to
+  `PatchVersionUpdate` when the batch has no `feat:` and no breaking change, so
+  `chore:`/`docs:`/`ci:` are **not** “no release”.
+- What those prefixes change is the changelog: `chore:`/`ci:`/`style`/`refactor`/
+  `test`/`build` are `hidden: true` sections, while `docs:` is a **visible**
+  `Documentation` section (`release-type: python`).
 - Version is bumped in `pyproject.toml` (`$.project.version`) and `src/dcc_mcp_nuke/__version__.py`.
 - `.github/workflows/release.yaml` builds hash-pinned artifacts and runs `tools/release_integrity.py` to bind the release to an immutable identity.
-- Use `chore:`/`docs:` for config and doc work so release-please does not cut a valueless version.
+- Use `chore:` for config and doc work: it still bumps the version, but keeps the changelog free of valueless entries.
 
 ## Do / Don't
 
 - **Do** single-source agent instructions here. This is the only agent contract file at the repo root.
 - **Do** prefer typed skills and tools over raw scripts, and drive the host through `dcc-mcp-cli` (`search` / `describe` / `call` / `load-skill`) rather than adapter-local Python.
-- **Don't** add `CLAUDE.md` / `GEMINI.md` / `CURSOR.md` / `ANTHROPIC.md` / `OPENAI.md` / `COPILOT.md` / `CODEBUDDY.md` / `.cursorrules` / `.clinerules` / `.windsurfrules` at the root. Vendor-specific notes live under `docs/integrations/`, linked from here.
+- **Don't** add `CLAUDE.md` / `GEMINI.md` / `CURSOR.md` / `ANTHROPIC.md` / `OPENAI.md` / `COPILOT.md` / `CODEBUDDY.md` / `.cursorrules` / `.clinerules` / `.windsurfrules` at the root. This repo has no `docs/integrations/`; keep any vendor-specific notes here.
 - **Don't** hardcode an exact version in tests (`assert __version__ == "X.Y.Z"`) — release-please bumps will break it. Use `>=` or read package metadata.
 - **Don't** commit build artifacts to the repo root (`dist/`, `build/`, `*.egg-info`).
