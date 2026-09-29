@@ -134,7 +134,14 @@ def _resolve_nuke_module(nuke_module: Optional[Any]) -> Optional[Any]:
 
 def _env_mapping(nuke_module: Optional[Any]) -> Mapping[str, Any]:
     env = getattr(nuke_module, "env", None)
-    return env if isinstance(env, Mapping) else {}
+    if isinstance(env, Mapping):
+        return env
+    # Nuke 16/17 expose ``nuke.env`` as ``GlobalsEnvironment``: it supports keys(),
+    # get() and [] but is neither a Mapping nor iterable, so snapshot it into a dict.
+    try:
+        return {key: env[key] for key in env.keys()}
+    except Exception:
+        return {}
 
 
 def _flag(mapping: Mapping[str, Any], keys: Sequence[str]) -> bool:

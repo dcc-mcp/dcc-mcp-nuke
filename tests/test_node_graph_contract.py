@@ -66,6 +66,12 @@ class FakeNode:
 
 
 class FakeNuke:
+    """Mirror the real ``nuke`` module: there is no ``allNodeClasses()``, and
+    ``createNode`` raises ``RuntimeError("<Class>: Unknown command")`` for an
+    unavailable class without adding a node (verified on Nuke 16.0v8 and 17.0v2)."""
+
+    known_classes = ("Blur", "Grade", "Merge2")
+
     def __init__(self, nodes):
         self.nodes = list(nodes)
         self.deleted = []
@@ -74,14 +80,13 @@ class FakeNuke:
         assert recurseGroups is True
         return list(self.nodes)
 
-    def allNodeClasses(self):
-        return ["Blur", "Grade", "Merge2"]
-
     def toNode(self, name):
         return next((node for node in self.nodes if node.name() == name), None)
 
     def createNode(self, node_class, inpanel=False):
         assert inpanel is False
+        if node_class not in self.known_classes:
+            raise RuntimeError(f"{node_class}: Unknown command")
         node = FakeNode(f"{node_class}{len(self.nodes) + 1}", node_class)
         self.nodes.append(node)
         return node
