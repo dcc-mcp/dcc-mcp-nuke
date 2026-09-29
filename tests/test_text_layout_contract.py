@@ -197,9 +197,6 @@ class FakeNuke:
         assert recurseGroups is True
         return list(self.nodes)
 
-    def allNodeClasses(self):
-        return ["Text2"]
-
     def views(self):
         return ["main"]
 
