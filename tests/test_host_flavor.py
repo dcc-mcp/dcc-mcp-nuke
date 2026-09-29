@@ -93,6 +93,41 @@ def test_nukex_env_key_detects_nukex(monkeypatch):
     assert report.signals == ("nuke.env:nukex",)
 
 
+class FakeGlobalsEnvironment:
+    """Mirror Nuke 16/17 ``nuke.env``: keys/get/[] work, but it is not a Mapping and not iterable."""
+
+    def __init__(self, **values):
+        self._values = dict(values)
+
+    def keys(self):
+        return list(self._values)
+
+    def get(self, key, default=None):
+        return self._values.get(key, default)
+
+    def __getitem__(self, key):
+        return self._values[key]
+
+    def __len__(self):
+        return len(self._values)
+
+    def __contains__(self, key):
+        return key in self._values
+
+
+def test_real_nuke_env_object_detects_nukex_gui_and_version(monkeypatch):
+    monkeypatch.setattr(sys, "executable", "Nuke17.0")
+    monkeypatch.delenv(ENV_FLAVOR_OVERRIDE, raising=False)
+    env = FakeGlobalsEnvironment(nukex=True, studio=False, gui=True, NukeVersionString="17.0v2")
+
+    report = detect_host_flavor(SimpleNamespace(env=env))
+
+    assert report.flavor == FLAVOR_NUKE_X
+    assert report.signals == ("nuke.env:nukex",)
+    assert report.gui is True
+    assert report.host_version == "17.0v2"
+
+
 def test_nukex_executable_name_detects_nukex(monkeypatch):
     monkeypatch.setattr(sys, "executable", "/opt/Nuke16.0/NukeX16.0")
     monkeypatch.delenv(ENV_FLAVOR_OVERRIDE, raising=False)

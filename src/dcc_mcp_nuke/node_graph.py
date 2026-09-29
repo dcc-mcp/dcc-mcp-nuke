@@ -31,7 +31,14 @@ def create_node_handle(
     before = _graph_snapshot(nuke)
     created = None
     try:
-        created = nuke.createNode(node_class, inpanel=False)
+        try:
+            created = nuke.createNode(node_class, inpanel=False)
+        except RuntimeError as exc:
+            # Nuke has no API that lists creatable classes; an unavailable class makes
+            # createNode raise "<Class>: Unknown command" without adding a node.
+            if _is_unknown_command(exc) and _graph_snapshot(nuke).keys() == before.keys():
+                raise ValueError("node_class is not available in this Nuke host") from None
+            raise
         if name is not None:
             created.setName(name, uncollide=False)
         if x is not None and y is not None:
@@ -211,8 +218,10 @@ def _validate_create_request(
     if x is not None:
         _bounded_int("x", x, -1_000_000, 1_000_000)
         _bounded_int("y", y, -1_000_000, 1_000_000)
-    if node_class not in set(nuke.allNodeClasses()):
-        raise ValueError("node_class is not available in this Nuke host")
+
+
+def _is_unknown_command(exc: RuntimeError) -> bool:
+    return str(exc).strip().lower().endswith("unknown command")
 
 
 def _graph_snapshot(nuke: Any) -> dict[str, Any]:
