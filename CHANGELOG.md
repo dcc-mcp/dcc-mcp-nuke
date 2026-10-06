@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.16.2](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.16.1...v0.16.2) (2026-10-06)
+
+
+### Documentation
+
+* **readme:** add the generated DCC-MCP host matrix pointer ([#70](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/70)) ([501fe16](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/501fe165e38277eea8cd889c457045098e8bc985))
+
 ## [0.16.1](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.16.0...v0.16.1) (2026-09-24)
 
 
