@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.16.2](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.16.1...v0.16.2) (2026-10-10)
+
+
+### Bug Fixes
+
+* support the real Nuke host API for node creation and host flavor ([935a4f2](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/935a4f2dfe24b35f82fbb4db74bbf1f8c1f78df8))
+
+
+### Documentation
+
+* **readme:** add the generated DCC-MCP host matrix pointer ([#70](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/70)) ([501fe16](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/501fe165e38277eea8cd889c457045098e8bc985))
+* refresh the generated DCC-MCP host matrix pointer ([81a75f6](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/81a75f668edee791d3c9a67b11741291c35a0e00))
+
 ## [0.16.1](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.16.0...v0.16.1) (2026-09-24)
 
 
