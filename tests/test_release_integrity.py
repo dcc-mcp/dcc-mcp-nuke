@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import os
 import shlex
+import shutil
 import subprocess
 import sys
 import zipfile
@@ -347,3 +349,59 @@ def test_release_workflow_is_sha_pinned_least_privilege_and_digest_bound() -> No
     requirement_lines = [line for line in requirements.splitlines() if line and not line.startswith("#")]
     assert requirement_lines
     assert all("==" in line and "--hash=sha256:" in line for line in requirement_lines)
+
+
+def _release_token_guard() -> dict:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yaml").read_text(encoding="utf-8"))
+    job = workflow["jobs"]["release-please"]
+    assert job["runs-on"] == "ubuntu-latest"
+    guard, action = job["steps"]
+    token = "${{ secrets.PERSONAL_ACCESS_TOKEN }}"
+    assert guard["name"] == "Require organization release token"
+    assert guard["shell"] == "bash"
+    assert guard["env"] == {"PERSONAL_ACCESS_TOKEN": token}
+    assert "if" not in guard
+    assert "continue-on-error" not in guard
+    assert action["id"] == "release"
+    assert action["uses"] == "googleapis/release-please-action@0dfd8538845b8e92600d271a895a5372865d4062"
+    assert action["with"]["token"] == token
+    return guard
+
+
+def _native_bash() -> str:
+    if os.name == "nt":
+        # The Windows system bash.exe launches WSL; CI provides native Git Bash.
+        git = shutil.which("git")
+        assert git, "Git for Windows is required to test the Bash preflight"
+        for parent in Path(git).resolve().parents:
+            candidate = parent / "bin" / "bash.exe"
+            if candidate.is_file():
+                return str(candidate)
+        pytest.fail("Cannot find Git for Windows' bin/bash.exe")
+    bash = shutil.which("bash")
+    assert bash, "Bash is required to exercise the release preflight"
+    return bash
+
+
+@pytest.mark.parametrize("token", [None, "", "synthetic-token-do-not-print"])
+def test_release_token_preflight_fails_closed_without_leaking(token):
+    guard = _release_token_guard()
+    env = os.environ.copy()
+    env.pop("PERSONAL_ACCESS_TOKEN", None)
+    if token is not None:
+        env["PERSONAL_ACCESS_TOKEN"] = token
+    result = subprocess.run(
+        [_native_bash(), "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", guard["run"]],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    output = result.stdout + result.stderr
+    if token:
+        assert result.returncode == 0, output
+        assert token not in output
+    else:
+        assert result.returncode != 0
+        assert "::error::" in output
+        assert "PERSONAL_ACCESS_TOKEN" in output
