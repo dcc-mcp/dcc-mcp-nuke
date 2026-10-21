@@ -230,11 +230,20 @@ def _verify_root_readback(knobs: dict[str, Any], requested: dict[str, Any]) -> N
 
 
 def _restore_root(knobs: dict[str, Any], previous: dict[str, Any]) -> None:
-    try:
-        for label, value in previous.items():
+    """Restore every Root setting, attempting all knobs even if one restore fails.
+
+    A single failing ``setValue`` must not abort the remaining restores: leaving
+    other Root settings at the requested values is a partial rollback and a
+    data-integrity defect. Accumulate failures and report only after all are tried.
+    """
+    failed = False
+    for label, value in previous.items():
+        try:
             knobs[label].setValue(value)
-    except Exception:
-        raise ScriptLifecycleRuntimeError("root settings rollback failed") from None
+        except Exception:
+            failed = True
+    if failed:
+        raise ScriptLifecycleRuntimeError("root settings rollback failed")
 
 
 def _require_format(nuke: Any, name: str) -> Any:
