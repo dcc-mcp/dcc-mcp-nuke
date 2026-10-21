@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.16.3](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.16.2...v0.16.3) (2026-10-21)
+
+
+### Bug Fixes
+
+* bound omitted_knobs for max_knobs_per_node truncation ([b9e3594](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/b9e3594b9f8ef9801244698f275c7a3a6eca3217))
+
 ## [0.16.2](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.16.1...v0.16.2) (2026-10-10)
 
 
