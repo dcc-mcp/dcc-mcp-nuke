@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import importlib.util
+import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 import yaml
@@ -167,6 +170,34 @@ def test_list_node_graph_keeps_security_omissions_when_truncating():
     # while knobs omitted only by the cap are merely counted.
     assert described["omitted_knobs"] == ["secret_script"]
     assert described["omitted_knob_count"] == 60
+
+
+def _load_list_nodes_module():
+    path = Path(__file__).parents[1] / "src" / "dcc_mcp_nuke" / "skills" / "nuke-script" / "scripts" / "list_nodes.py"
+    spec = importlib.util.spec_from_file_location("list_nodes", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_list_nodes_entrypoint_forwards_cap_and_bounds_truncated_knobs(monkeypatch):
+    node = _many_knob_node("Big1", 60)
+    nuke = ModuleType("nuke")
+    nuke.allNodes = lambda recurseGroups=True: [node]
+    monkeypatch.setitem(sys.modules, "nuke", nuke)
+    module = _load_list_nodes_module()
+
+    topology_only = module.main.__wrapped__(max_knobs_per_node=0)
+    described = topology_only["context"]["nodes"][0]
+    assert described["knobs"] == {}
+    assert described["omitted_knobs"] == []
+    assert described["omitted_knob_count"] == 60
+
+    capped = module.main.__wrapped__(max_knobs_per_node=5)
+    described = capped["context"]["nodes"][0]
+    assert len(described["knobs"]) == 5
+    assert described["omitted_knobs"] == []
+    assert described["omitted_knob_count"] == 55
 
 
 def test_create_node_never_clears_existing_graph_and_reads_back_identity():
