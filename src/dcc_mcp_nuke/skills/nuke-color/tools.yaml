@@ -1,0 +1,95 @@
+tools:
+  - name: get_color_management
+    description: >-
+      Read the active Nuke Root color-management mode, current OCIO config and
+      its enumerated preset list, working space, and a bounded enumerated
+      colorspace list. Read-only; does not change the script.
+    input_schema:
+      type: object
+      additionalProperties: false
+      properties:
+        max_colorspaces: {type: integer, minimum: 1, maximum: 512, default: 256}
+        max_ocio_configs: {type: integer, minimum: 1, maximum: 512, default: 128}
+    read_only: true
+    destructive: false
+    idempotent: true
+    execution: sync
+    affinity: main
+    timeout_hint_secs: 15
+    source_file: scripts/get_color_management.py
+  - name: set_ocio_config
+    description: Set the Nuke Root OCIO config from the enumerated preset list and verify the readback; reject unknown config names.
+    input_schema:
+      type: object
+      required: [config]
+      additionalProperties: false
+      properties:
+        config: {type: string, minLength: 1, maxLength: 256, description: Exact OCIO config preset name from the enumerated list.}
+    read_only: false
+    destructive: false
+    idempotent: true
+    execution: sync
+    affinity: main
+    timeout_hint_secs: 30
+    source_file: scripts/set_ocio_config.py
+    next-tools:
+      on-success:
+        - nuke_color__get_color_management
+  - name: set_read_colorspace
+    description: Set one Nuke Read node colorspace knob from its enumerated colorspace list and verify the readback; reject unknown names.
+    input_schema:
+      type: object
+      required: [node_name, colorspace]
+      additionalProperties: false
+      properties:
+        node_name: {type: string, minLength: 1, maxLength: 128, pattern: "^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$"}
+        colorspace: {type: string, minLength: 1, maxLength: 256, description: Exact colorspace name from the Read node's enumerated list.}
+    read_only: false
+    destructive: false
+    idempotent: true
+    execution: sync
+    affinity: main
+    timeout_hint_secs: 30
+    source_file: scripts/set_read_colorspace.py
+    next-tools:
+      on-success:
+        - nuke_color__get_color_management
+  - name: set_write_colorspace
+    description: Set one Nuke Write node colorspace knob from its enumerated colorspace list and verify the readback; reject unknown names.
+    input_schema:
+      type: object
+      required: [node_name, colorspace]
+      additionalProperties: false
+      properties:
+        node_name: {type: string, minLength: 1, maxLength: 128, pattern: "^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$"}
+        colorspace: {type: string, minLength: 1, maxLength: 256, description: Exact colorspace name from the Write node's enumerated list.}
+    read_only: false
+    destructive: false
+    idempotent: true
+    execution: sync
+    affinity: main
+    timeout_hint_secs: 30
+    source_file: scripts/set_write_colorspace.py
+    next-tools:
+      on-success:
+        - nuke_color__get_color_management
+  - name: set_display_transform
+    description: Set one Nuke OCIODisplay node display and view from their enumerated lists and verify both readbacks; reject unknown names.
+    input_schema:
+      type: object
+      required: [node_name, display, view]
+      additionalProperties: false
+      properties:
+        node_name: {type: string, minLength: 1, maxLength: 128, pattern: "^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$"}
+        display: {type: string, minLength: 1, maxLength: 256, description: Exact display device name from the OCIODisplay enumerated list.}
+        view: {type: string, minLength: 1, maxLength: 256, description: Exact view transform name from the selected display's enumerated view list.}
+    read_only: false
+    destructive: false
+    idempotent: true
+    execution: sync
+    affinity: main
+    timeout_hint_secs: 30
+    source_file: scripts/set_display_transform.py
+    next-tools:
+      on-success:
+        - nuke_color__get_color_management

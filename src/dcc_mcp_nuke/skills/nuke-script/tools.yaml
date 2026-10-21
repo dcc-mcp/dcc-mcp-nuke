@@ -107,3 +107,92 @@ tools:
     affinity: main
     timeout_hint_secs: 60
     source_file: scripts/save_script.py
+  - name: get_root_settings
+    description: >-
+      Read the active Nuke Root frame range, fps, format, and a bounded enumerated
+      format list. Read-only; does not change the script.
+    input_schema:
+      type: object
+      additionalProperties: false
+      properties:
+        max_formats: {type: integer, minimum: 1, maximum: 512, default: 128}
+    read_only: true
+    destructive: false
+    idempotent: true
+    execution: sync
+    affinity: main
+    timeout_hint_secs: 15
+    source_file: scripts/get_root_settings.py
+  - name: set_root_settings
+    description: >-
+      Set one or more Nuke Root settings (frame range, fps, format) from bounded,
+      validated values and verify each readback; reject an empty request, an invalid
+      range, or a format outside the enumerated list.
+    input_schema:
+      type: object
+      additionalProperties: false
+      description: At least one of first_frame, last_frame, fps, or format is required.
+      properties:
+        first_frame: {type: integer, minimum: 0, maximum: 1000000000, description: Start frame; must not exceed the effective last frame.}
+        last_frame: {type: integer, minimum: 0, maximum: 1000000000, description: End frame; must not be below the effective first frame.}
+        fps: {type: number, exclusiveMinimum: 0, maximum: 1000, description: Playback frame rate.}
+        format: {type: string, minLength: 1, maxLength: 256, description: Exact format name from the enumerated format list.}
+    read_only: false
+    destructive: false
+    idempotent: true
+    execution: sync
+    affinity: main
+    timeout_hint_secs: 30
+    source_file: scripts/set_root_settings.py
+    next-tools:
+      on-success:
+        - nuke_script__get_root_settings
+  - name: new_script
+    description: >-
+      Clear the current Nuke graph and start a fresh script, optionally applying
+      Root frame range, fps, and format. Guards unsaved changes unless
+      discard_unsaved_changes is true; frame range bounds must be provided together.
+    input_schema:
+      type: object
+      additionalProperties: false
+      properties:
+        discard_unsaved_changes:
+          type: boolean
+          default: false
+          description: Explicitly allow clearing a modified current script without saving it.
+        first_frame: {type: integer, minimum: 0, maximum: 1000000000, description: Start frame; must be provided together with last_frame.}
+        last_frame: {type: integer, minimum: 0, maximum: 1000000000, description: End frame; must be provided together with first_frame.}
+        fps: {type: number, exclusiveMinimum: 0, maximum: 1000, description: Playback frame rate.}
+        format: {type: string, minLength: 1, maxLength: 256, description: Exact format name from the enumerated format list.}
+    read_only: false
+    destructive: true
+    idempotent: false
+    execution: sync
+    affinity: main
+    timeout_hint_secs: 60
+    source_file: scripts/new_script.py
+    next-tools:
+      on-success:
+        - nuke_script__inspect_script
+  - name: paste_nodes
+    description: >-
+      Paste nodes from an absolute .nk node-paste file into the current Nuke graph
+      without clearing existing nodes; report the bounded added-node identities and
+      fail closed if any pre-existing node would be lost.
+    input_schema:
+      type: object
+      required: [path]
+      additionalProperties: false
+      properties:
+        path: {type: string, description: Absolute path to an existing .nk node-paste file.}
+        max_reported_nodes: {type: integer, minimum: 1, maximum: 1000, default: 256}
+    read_only: false
+    destructive: false
+    idempotent: false
+    execution: sync
+    affinity: main
+    timeout_hint_secs: 60
+    source_file: scripts/paste_nodes.py
+    next-tools:
+      on-success:
+        - nuke_script__list_nodes

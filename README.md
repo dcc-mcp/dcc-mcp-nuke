@@ -141,7 +141,13 @@ Set `DCC_MCP_NUKE_PORT` only when a fixed direct port is required.
 
 The bundled `nuke-script` skill can open an existing absolute `.nk` path,
 inspect bounded node topology and knob values, sample per-channel AOV
-statistics, and explicitly save the current script. The `nuke-node-graph`
+statistics, and explicitly save the current script. It also starts a fresh
+script with `new_script` (guarding unsaved changes), pastes nodes from an
+absolute `.nk` file additively with `paste_nodes` without clearing existing
+nodes, and reads or sets Root frame range, fps, and format through
+`get_root_settings` and `set_root_settings`; root-settings writes validate the
+range and enumerate the format list, require a matching readback, and roll back
+on mismatch. The `nuke-node-graph`
 skill adds non-clearing node CRUD, exact input connections, and readback-
 verified static knob edits while rejecting executable knobs. The
 `nuke-text-layout` skill creates or updates one bounded
@@ -154,7 +160,16 @@ preserving ordinary Unicode labels. Dynamic-state probes must return their
 documented boolean, curve-list, and non-negative key-count shapes; unsupported
 or unobservable probe results fail closed before mutation. Scale, box, and
 position readback must use finite non-boolean numeric values with exact bounded
-shapes; malformed readback fails closed and rolls back. Releases
+shapes; malformed readback fails closed and rolls back.
+
+The `nuke-color` skill inspects and sets Nuke color management through bounded
+typed verbs. `get_color_management` reports the active Root color-management
+mode, the current OCIO config and its enumerated preset list, the working space,
+and a bounded enumerated colorspace list without changing the script. The
+`set_ocio_config`, `set_read_colorspace`, `set_write_colorspace`, and
+`set_display_transform` verbs accept only names drawn from the enumerated lists,
+reject unknown values instead of silently storing them, and require a matching
+readback with rollback on mismatch. Releases
 use a canonical tag and exact-main identity check, one digest-bound wheel/sdist
 bundle, and a minimal-OIDC publisher in `release.yaml` and the GitHub `pypi`
 environment. Immediately before publishing, the workflow force-refreshes
