@@ -123,6 +123,52 @@ def test_list_node_graph_reports_topology_and_bounded_knob_values():
     assert result["nodes"][0]["omitted_knobs"] == ["secret_script"]
 
 
+def _many_knob_node(name, count, *, extra=None):
+    knobs = {f"knob_{index:03d}": FakeKnob(index) for index in range(count)}
+    if extra:
+        knobs.update(extra)
+    return FakeNode(name, "Group", knobs)
+
+
+def test_list_node_graph_bounds_truncated_knobs_for_topology_only():
+    node = _many_knob_node("Big1", 60)
+
+    result = list_node_graph(FakeNuke([node]), max_nodes=10, max_knobs_per_node=0)
+
+    described = result["nodes"][0]
+    # A topology-only call must not enumerate every capped knob name.
+    assert described["knobs"] == {}
+    assert described["omitted_knobs"] == []
+    assert all(knob_name not in described["omitted_knobs"] for knob_name in node.knobs())
+    # Truncation is expressed as a single bounded count instead of a name list.
+    assert described["omitted_knob_count"] == 60
+
+
+def test_list_node_graph_reports_truncated_knob_count_when_capped():
+    node = _many_knob_node("Big1", 60)
+
+    result = list_node_graph(FakeNuke([node]), max_nodes=10, max_knobs_per_node=5)
+
+    described = result["nodes"][0]
+    assert len(described["knobs"]) == 5
+    assert described["omitted_knobs"] == []
+    # 60 total knobs minus the 5 returned: the remaining 55 are truncated,
+    # counted but never enumerated by name.
+    assert described["omitted_knob_count"] == 55
+
+
+def test_list_node_graph_keeps_security_omissions_when_truncating():
+    node = _many_knob_node("Big1", 60, extra={"secret_script": FakeKnob("danger")})
+
+    result = list_node_graph(FakeNuke([node]), max_nodes=10, max_knobs_per_node=0)
+
+    described = result["nodes"][0]
+    # Security-rejected knobs stay enumerated by name (fail-closed transparency),
+    # while knobs omitted only by the cap are merely counted.
+    assert described["omitted_knobs"] == ["secret_script"]
+    assert described["omitted_knob_count"] == 60
+
+
 def test_create_node_never_clears_existing_graph_and_reads_back_identity():
     existing = FakeNode("KeepMe", "Read")
     nuke = FakeNuke([existing])
