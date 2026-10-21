@@ -169,10 +169,11 @@ and a bounded enumerated colorspace list without changing the script. The
 `set_ocio_config`, `set_read_colorspace`, `set_write_colorspace`, and
 `set_display_transform` verbs accept only names drawn from the enumerated lists,
 reject unknown values instead of silently storing them, and require a matching
-readback with rollback on mismatch. Releases
-use a canonical tag and exact-main identity check, one digest-bound wheel/sdist
-bundle, and a minimal-OIDC publisher in `release.yaml` and the GitHub `pypi`
-environment. Immediately before publishing, the workflow force-refreshes
+readback with rollback on mismatch.
+
+Releases use a canonical tag and exact-main identity check, one digest-bound
+wheel/sdist bundle, and a minimal-OIDC publisher in `release.yaml` and the
+GitHub `pypi` environment. Immediately before publishing, the workflow force-refreshes
 authoritative main and tag refs into an isolated namespace and repeats the
 identity checks. CI obtains the Install SOP schema from the isolated minimum-
 Core environment used for the installed-wheel smoke rather than its ambient

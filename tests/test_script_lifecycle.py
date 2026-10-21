@@ -20,10 +20,53 @@ ROOT = Path(__file__).parents[1]
 SKILL_ROOT = ROOT / "src" / "dcc_mcp_nuke" / "skills" / "nuke-script"
 
 
-class FakeKnob:
-    def __init__(self, value, values=None, *, reject=()):
+class FakeFormat:
+    """Mirror ``nuke.Format``: named via ``.name()``, not a string."""
+
+    def __init__(self, name, width=1920, height=1080, pixel_aspect=1.0):
+        self._name = name
+        self._width = width
+        self._height = height
+        self._pixel_aspect = pixel_aspect
+
+    def name(self):
+        return self._name
+
+    def width(self):
+        return self._width
+
+    def height(self):
+        return self._height
+
+    def pixelAspect(self):
+        return self._pixel_aspect
+
+
+class FakeFormatKnob:
+    """Mirror ``Format_Knob``: ``value()`` returns a Format, set with a Format.
+
+    Real Nuke ``Format_Knob`` has NO ``values()``; the enumerated list comes from
+    ``nuke.formats()``. This fake deliberately omits ``values()`` so any code that
+    still tries to enumerate via the knob fails loudly.
+    """
+
+    def __init__(self, fmt, *, reject_names=()):
+        self.current = fmt
+        self.reject_names = set(reject_names)
+
+    def value(self):
+        return self.current
+
+    def setValue(self, value):
+        name = value.name() if hasattr(value, "name") and callable(value.name) else str(value)
+        if name in self.reject_names:
+            return
         self.current = value
-        self._values = values
+
+
+class FakeKnob:
+    def __init__(self, value, *, reject=()):
+        self.current = value
         self.reject = set(reject)
 
     def value(self):
@@ -34,16 +77,20 @@ class FakeKnob:
             return
         self.current = value
 
-    def values(self):
-        if self._values is None:
-            raise RuntimeError("not an enumeration knob")
-        return list(self._values)
+
+class _SelectedKnob:
+    def __init__(self, node):
+        self._node = node
+
+    def value(self):
+        return self._node.selected()
 
 
 class FakeNode:
-    def __init__(self, name, node_class):
+    def __init__(self, name, node_class, *, selected=False):
         self._name = name
         self._class = node_class
+        self._selected = selected
 
     def name(self):
         return self._name
@@ -53,6 +100,17 @@ class FakeNode:
 
     def Class(self):
         return self._class
+
+    def knob(self, name):
+        if name == "selected":
+            return _SelectedKnob(self)
+        return None
+
+    def setSelected(self, value):
+        self._selected = bool(value)
+
+    def selected(self):
+        return self._selected
 
 
 class FakeRoot:
@@ -75,6 +133,7 @@ class FakeNuke:
         root_knobs=None,
         nodes=(),
         *,
+        formats=(),
         modified=False,
         paste_result=None,
         paste_raises=False,
@@ -82,15 +141,20 @@ class FakeNuke:
     ):
         self._root = FakeRoot(root_knobs or {}, modified)
         self.nodes = list(nodes)
+        self._formats = list(formats)
         self.cleared = False
         self.deleted = []
         self.pasted = []
+        self.selection_at_paste = None
         self.paste_result = list(paste_result or ())
         self.paste_raises = paste_raises
         self.paste_drops_existing = paste_drops_existing
 
     def root(self):
         return self._root
+
+    def formats(self):
+        return list(self._formats)
 
     def allNodes(self, recurseGroups=True):
         assert recurseGroups is True
@@ -105,6 +169,7 @@ class FakeNuke:
 
     def nodePaste(self, path):
         self.pasted.append(path)
+        self.selection_at_paste = {node.name(): node.selected() for node in self.nodes}
         if self.paste_drops_existing:
             self.nodes = []
         for node in self.paste_result:
@@ -119,12 +184,15 @@ class FakeNuke:
 
 
 def _root_knobs(first=1, last=100, fps=24.0, fmt="HD_1080", formats=("HD_1080", "HD_720", "UHD_4K")):
-    return {
+    format_objects = [FakeFormat(name) for name in formats]
+    current = next((f for f in format_objects if f.name() == fmt), FakeFormat(fmt))
+    knobs = {
         "first_frame": FakeKnob(first),
         "last_frame": FakeKnob(last),
         "fps": FakeKnob(fps),
-        "format": FakeKnob(fmt, values=list(formats)),
+        "format": FakeFormatKnob(current),
     }
+    return knobs, format_objects
 
 
 def _load_route(name):
@@ -137,7 +205,8 @@ def _load_route(name):
 
 
 def test_get_root_settings_reports_frame_range_fps_and_enumerated_formats():
-    nuke = FakeNuke(_root_knobs())
+    knobs, formats = _root_knobs()
+    nuke = FakeNuke(knobs, formats=formats)
 
     result = get_root_settings(nuke)
 
@@ -150,20 +219,39 @@ def test_get_root_settings_reports_frame_range_fps_and_enumerated_formats():
     assert result["available_formats_truncated"] is False
 
 
+def test_get_root_settings_enumerates_formats_via_nuke_formats_not_the_knob():
+    # The format knob exposes no values(); the list must come from nuke.formats().
+    formats = [FakeFormat("HD_1080"), FakeFormat("UHD_4K")]
+    knobs = {
+        "first_frame": FakeKnob(1),
+        "last_frame": FakeKnob(100),
+        "fps": FakeKnob(24.0),
+        "format": FakeFormatKnob(formats[0]),
+    }
+    nuke = FakeNuke(knobs, formats=formats)
+
+    result = get_root_settings(nuke)
+
+    assert not hasattr(knobs["format"], "values")
+    assert result["format"] == "HD_1080"
+    assert result["available_formats"] == ["HD_1080", "UHD_4K"]
+
+
 def test_get_root_settings_bounds_format_enumeration():
-    formats = [f"FMT{index:03d}" for index in range(40)]
-    nuke = FakeNuke(_root_knobs(formats=formats))
+    names = [f"FMT{index:03d}" for index in range(40)]
+    knobs, formats = _root_knobs(formats=names)
+    nuke = FakeNuke(knobs, formats=formats)
 
     result = get_root_settings(nuke, max_formats=5)
 
-    assert result["available_formats"] == formats[:5]
+    assert result["available_formats"] == names[:5]
     assert result["available_format_count"] == 40
     assert result["available_formats_truncated"] is True
 
 
 def test_set_root_settings_applies_frame_range_and_reads_back():
-    knobs = _root_knobs()
-    nuke = FakeNuke(knobs)
+    knobs, formats = _root_knobs()
+    nuke = FakeNuke(knobs, formats=formats)
 
     result = set_root_settings(nuke, first_frame=10, last_frame=50, fps=25.0)
 
@@ -175,25 +263,38 @@ def test_set_root_settings_applies_frame_range_and_reads_back():
     assert knobs["fps"].value() == 25.0
 
 
-def test_set_root_settings_sets_format_from_the_enumerated_list():
-    knobs = _root_knobs()
-    nuke = FakeNuke(knobs)
+def test_set_root_settings_sets_format_with_a_format_object():
+    knobs, formats = _root_knobs()
+    nuke = FakeNuke(knobs, formats=formats)
 
     set_root_settings(nuke, format="UHD_4K")
 
-    assert knobs["format"].value() == "UHD_4K"
+    # The knob stores a Format object, and the request is read back by name.
+    assert knobs["format"].value().name() == "UHD_4K"
+
+
+def test_set_root_settings_accepts_negative_frame_range():
+    knobs, formats = _root_knobs()
+    nuke = FakeNuke(knobs, formats=formats)
+
+    result = set_root_settings(nuke, first_frame=-10, last_frame=120)
+
+    assert result["first_frame"] == -10
+    assert result["last_frame"] == 120
+    assert knobs["first_frame"].value() == -10
 
 
 def test_set_root_settings_rejects_empty_request():
-    nuke = FakeNuke(_root_knobs())
+    knobs, formats = _root_knobs()
+    nuke = FakeNuke(knobs, formats=formats)
 
     with pytest.raises(ScriptLifecycleValidationError):
         set_root_settings(nuke)
 
 
 def test_set_root_settings_rejects_inverted_frame_range():
-    knobs = _root_knobs()
-    nuke = FakeNuke(knobs)
+    knobs, formats = _root_knobs()
+    nuke = FakeNuke(knobs, formats=formats)
 
     with pytest.raises(ScriptLifecycleValidationError):
         set_root_settings(nuke, first_frame=200)
@@ -202,17 +303,26 @@ def test_set_root_settings_rejects_inverted_frame_range():
 
 
 def test_set_root_settings_rejects_unknown_format():
-    knobs = _root_knobs()
-    nuke = FakeNuke(knobs)
+    knobs, formats = _root_knobs()
+    nuke = FakeNuke(knobs, formats=formats)
 
     with pytest.raises(ScriptLifecycleValidationError):
         set_root_settings(nuke, format="NOPE")
 
-    assert knobs["format"].value() == "HD_1080"
+    assert knobs["format"].value().name() == "HD_1080"
+
+
+def test_set_root_settings_rejects_format_when_formats_are_not_enumerable():
+    knobs, _ = _root_knobs()
+    nuke = FakeNuke(knobs, formats=[])
+
+    with pytest.raises(ScriptLifecycleRuntimeError):
+        set_root_settings(nuke, format="HD_1080")
 
 
 def test_set_root_settings_rejects_non_positive_fps():
-    nuke = FakeNuke(_root_knobs())
+    knobs, formats = _root_knobs()
+    nuke = FakeNuke(knobs, formats=formats)
 
     with pytest.raises(ScriptLifecycleValidationError):
         set_root_settings(nuke, fps=0)
@@ -222,9 +332,9 @@ def test_set_root_settings_rejects_non_positive_fps():
 
 
 def test_set_root_settings_rolls_back_on_readback_mismatch():
-    knobs = _root_knobs()
+    knobs, formats = _root_knobs()
     knobs["fps"] = FakeKnob(24.0, reject={25.0})
-    nuke = FakeNuke(knobs)
+    nuke = FakeNuke(knobs, formats=formats)
 
     with pytest.raises(ScriptLifecycleRuntimeError):
         set_root_settings(nuke, fps=25.0)
@@ -232,8 +342,20 @@ def test_set_root_settings_rolls_back_on_readback_mismatch():
     assert knobs["fps"].value() == 24.0
 
 
+def test_set_root_settings_rolls_back_format_on_readback_mismatch():
+    knobs, formats = _root_knobs()
+    knobs["format"] = FakeFormatKnob(next(f for f in formats if f.name() == "HD_1080"), reject_names={"UHD_4K"})
+    nuke = FakeNuke(knobs, formats=formats)
+
+    with pytest.raises(ScriptLifecycleRuntimeError):
+        set_root_settings(nuke, format="UHD_4K")
+
+    assert knobs["format"].value().name() == "HD_1080"
+
+
 def test_new_script_guards_unsaved_changes_before_clearing():
-    nuke = FakeNuke(_root_knobs(), nodes=[FakeNode("Read1", "Read")], modified=True)
+    knobs, formats = _root_knobs()
+    nuke = FakeNuke(knobs, nodes=[FakeNode("Read1", "Read")], formats=formats, modified=True)
 
     with pytest.raises(ScriptLifecycleValidationError):
         new_script(nuke)
@@ -243,7 +365,8 @@ def test_new_script_guards_unsaved_changes_before_clearing():
 
 
 def test_new_script_clears_graph_when_discarding_unsaved_changes():
-    nuke = FakeNuke(_root_knobs(), nodes=[FakeNode("Read1", "Read")], modified=True)
+    knobs, formats = _root_knobs()
+    nuke = FakeNuke(knobs, nodes=[FakeNode("Read1", "Read")], formats=formats, modified=True)
 
     result = new_script(nuke, discard_unsaved_changes=True)
 
@@ -253,8 +376,8 @@ def test_new_script_clears_graph_when_discarding_unsaved_changes():
 
 
 def test_new_script_applies_root_settings_after_clearing():
-    knobs = _root_knobs()
-    nuke = FakeNuke(knobs, nodes=[FakeNode("Read1", "Read")])
+    knobs, formats = _root_knobs()
+    nuke = FakeNuke(knobs, nodes=[FakeNode("Read1", "Read")], formats=formats)
 
     result = new_script(nuke, first_frame=1001, last_frame=1100, fps=23.976, format="UHD_4K")
 
@@ -262,11 +385,22 @@ def test_new_script_applies_root_settings_after_clearing():
     assert knobs["first_frame"].value() == 1001
     assert knobs["last_frame"].value() == 1100
     assert knobs["fps"].value() == 23.976
-    assert knobs["format"].value() == "UHD_4K"
+    assert knobs["format"].value().name() == "UHD_4K"
+
+
+def test_new_script_accepts_negative_frame_range():
+    knobs, formats = _root_knobs()
+    nuke = FakeNuke(knobs, nodes=[FakeNode("Read1", "Read")], formats=formats)
+
+    result = new_script(nuke, first_frame=-5, last_frame=100)
+
+    assert result["first_frame"] == -5
+    assert knobs["first_frame"].value() == -5
 
 
 def test_new_script_requires_frame_bounds_together():
-    nuke = FakeNuke(_root_knobs())
+    knobs, formats = _root_knobs()
+    nuke = FakeNuke(knobs, formats=formats)
 
     with pytest.raises(ScriptLifecycleValidationError):
         new_script(nuke, first_frame=1)
@@ -293,14 +427,33 @@ def test_paste_nodes_is_additive_and_preserves_existing_nodes(tmp_path):
     assert {node.name() for node in nuke.nodes} == {"Read1", "Blur1"}
 
 
-def test_paste_nodes_rejects_non_absolute_or_missing_paths():
+def test_paste_nodes_clears_selection_before_pasting_and_restores_it_after(tmp_path):
+    script = tmp_path / "clip.nk"
+    script.write_text("Blur {}", encoding="utf-8")
+    existing = FakeNode("Read1", "Read", selected=True)
+    added = FakeNode("Blur1", "Blur")
+    nuke = FakeNuke(nodes=[existing], paste_result=[added])
+
+    result = paste_nodes(nuke, str(script))
+
+    # nodePaste connects into selected nodes, so selection must be cleared first.
+    assert nuke.selection_at_paste == {"Read1": False}
+    # The prior selection is restored once the paste is verified.
+    assert existing.selected() is True
+    assert result["added_node_count"] == 1
+
+
+def test_paste_nodes_rejects_non_absolute_or_missing_paths(tmp_path):
     nuke = FakeNuke(nodes=[FakeNode("Read1", "Read")])
 
     with pytest.raises(ScriptLifecycleValidationError):
         paste_nodes(nuke, "clip.nk")
 
+    # Cross-platform absolute path that does not exist (hits the "missing" branch
+    # on Linux/macOS as well as Windows).
+    missing = tmp_path / "missing" / "clip.nk"
     with pytest.raises(ScriptLifecycleValidationError):
-        paste_nodes(nuke, str(Path("C:/definitely/missing/clip.nk")))
+        paste_nodes(nuke, str(missing))
 
 
 def test_paste_nodes_rejects_wrong_suffix(tmp_path):
@@ -379,6 +532,8 @@ def test_script_lifecycle_verbs_declare_bounded_main_thread_and_paired_writes():
     assert tools["get_root_settings"]["read_only"] is True
     assert tools["set_root_settings"]["read_only"] is False
     assert tools["new_script"]["destructive"] is True
+    # Negative frame handles are legal, so the schema lower bound is negative.
+    assert tools["set_root_settings"]["input_schema"]["properties"]["first_frame"]["minimum"] < 0
     assert find_unpaired_write_verbs(manifest["tools"]) == []
 
 
@@ -400,8 +555,8 @@ def test_server_loads_script_lifecycle_on_the_main_thread_bridge(monkeypatch):
 
 
 def test_script_lifecycle_routes_reject_invalid_and_return_success(monkeypatch, tmp_path):
-    knobs = _root_knobs()
-    nuke = FakeNuke(knobs)
+    knobs, formats = _root_knobs()
+    nuke = FakeNuke(knobs, formats=formats)
     monkeypatch.setitem(sys.modules, "nuke", nuke)
 
     read_route = _load_route("get_root_settings")
@@ -412,7 +567,7 @@ def test_script_lifecycle_routes_reject_invalid_and_return_success(monkeypatch, 
     set_route = _load_route("set_root_settings")
     bad = set_route.main.__wrapped__(format="NOPE")
     assert bad["success"] is False
-    assert knobs["format"].value() == "HD_1080"
+    assert knobs["format"].value().name() == "HD_1080"
 
 
 def test_script_lifecycle_contract_is_in_package_surface_and_documented():

@@ -149,14 +149,33 @@ def set_display_transform(nuke: Any, node_name: str, display: str, view: str) ->
         if _knob_value(view_knob) != view:
             raise ColorManagementRuntimeError("view readback does not match request")
     except ColorManagementError:
-        _restore(view_knob, previous_view)
-        _restore(display_knob, previous_display)
+        _restore_display_view(display_knob, previous_display, view_knob, previous_view)
         raise
     except Exception:
-        _restore(view_knob, previous_view)
-        _restore(display_knob, previous_display)
+        _restore_display_view(display_knob, previous_display, view_knob, previous_view)
         raise ColorManagementRuntimeError("failed to set the display transform") from None
     return {"node": node_name, "class": "OCIODisplay", "display": display, "view": view}
+
+
+def _restore_display_view(display_knob: Any, previous_display: Any, view_knob: Any, previous_view: Any) -> None:
+    """Roll back display then view, attempting both even if one restore fails.
+
+    Display is restored first: the view enumeration is display-dependent, so the
+    previous view is only valid once the previous display is back in place. A
+    failing view restore must not leave the display modified.
+    """
+    failure: ColorManagementError | None = None
+    try:
+        _restore(display_knob, previous_display)
+    except ColorManagementError as exc:
+        failure = exc
+    try:
+        _restore(view_knob, previous_view)
+    except ColorManagementError as exc:
+        if failure is None:
+            failure = exc
+    if failure is not None:
+        raise failure
 
 
 def _set_node_colorspace(nuke: Any, node_name: str, node_class: str, colorspace: str) -> dict[str, Any]:
@@ -192,21 +211,22 @@ def _describe_colorspaces(nuke: Any, cap: int) -> tuple[list[str], bool, int, bo
 
 
 def _enumerate_colorspaces(nuke: Any) -> list[str]:
-    """Best-effort global colorspace enumeration across documented Nuke surfaces."""
-    for factory in (getattr(nuke, "colorspaces", None), getattr(nuke, "getColorspaceList", None)):
-        if not callable(factory):
-            continue
-        for with_root in (False, True):
-            try:
-                args = (nuke.root(),) if with_root else ()
-                raw = factory(*args)
-            except Exception:
-                continue
-            if isinstance(raw, (list, tuple)):
-                names = _clean_names(raw)
-                if names:
-                    return names
-    return []
+    """Enumerate global colorspaces via ``nuke.getOcioColorSpaces()``.
+
+    ``nuke.colorspaces`` is not callable, and ``nuke.getColorspaceList`` needs a
+    knob rather than the Root. The documented ``list[str]`` surface is
+    ``nuke.getOcioColorSpaces()``, which needs no argument.
+    """
+    factory = getattr(nuke, "getOcioColorSpaces", None)
+    if not callable(factory):
+        return []
+    try:
+        raw = factory()
+    except Exception:
+        return []
+    if not isinstance(raw, (list, tuple)):
+        return []
+    return _clean_names(raw)
 
 
 def _knob_enum(knob: Any, cap: int) -> dict[str, Any] | None:
