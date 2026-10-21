@@ -78,6 +78,22 @@ class FakeKnob:
         self.current = value
 
 
+class RestoreFaultKnob:
+    """Wrap a knob so restoring a specific previous value raises."""
+
+    def __init__(self, knob, raise_on):
+        self._knob = knob
+        self._raise_on = set(raise_on)
+
+    def value(self):
+        return self._knob.value()
+
+    def setValue(self, value):
+        if value in self._raise_on:
+            raise RuntimeError("restore fault")
+        self._knob.setValue(value)
+
+
 class _SelectedKnob:
     def __init__(self, node):
         self._node = node
@@ -351,6 +367,21 @@ def test_set_root_settings_rolls_back_format_on_readback_mismatch():
         set_root_settings(nuke, format="UHD_4K")
 
     assert knobs["format"].value().name() == "HD_1080"
+
+
+def test_set_root_settings_restores_all_knobs_even_when_one_restore_faults():
+    knobs, formats = _root_knobs()
+    # fps apply is rejected by the host -> readback mismatch -> rollback. Restoring
+    # the previous fps (24.0) faults, which must NOT abort the format restore.
+    knobs["fps"] = RestoreFaultKnob(FakeKnob(24.0, reject={25.0}), raise_on={24.0})
+    nuke = FakeNuke(knobs, formats=formats)
+
+    with pytest.raises(ScriptLifecycleRuntimeError) as excinfo:
+        set_root_settings(nuke, fps=25.0, format="UHD_4K")
+
+    # The format knob is restored despite the failing fps restore: no partial rollback.
+    assert knobs["format"].value().name() == "HD_1080"
+    assert "rollback" in str(excinfo.value)
 
 
 def test_new_script_guards_unsaved_changes_before_clearing():
