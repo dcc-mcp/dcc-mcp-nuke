@@ -174,16 +174,23 @@ def _describe_node(node: Any, *, max_knobs_per_node: int) -> dict[str, Any]:
 
     values: dict[str, Any] = {}
     omitted = []
+    omitted_knob_count = 0
     knobs = node.knobs()
     for name in sorted(knobs):
         knob = knobs[name]
         try:
             _reject_sensitive_knob(name, _knob_class(knob))
             if len(values) >= max_knobs_per_node:
-                omitted.append(name)
+                # Truncated only by max_knobs_per_node: report a bounded count instead
+                # of enumerating every remaining name, so "topology only" calls
+                # (max_knobs_per_node=0) cannot expand omitted_knobs to the full
+                # knob name list and exceed MCP result limits.
+                omitted_knob_count += 1
                 continue
             values[name] = _json_value(knob.value())
         except (TypeError, ValueError, RuntimeError):
+            # Security-rejected and unreadable knobs stay enumerated by name so
+            # fail-closed omissions remain transparent (their count is naturally small).
             omitted.append(name)
     return {
         "name": node.name(),
@@ -191,6 +198,7 @@ def _describe_node(node: Any, *, max_knobs_per_node: int) -> dict[str, Any]:
         "inputs": inputs,
         "knobs": values,
         "omitted_knobs": omitted,
+        "omitted_knob_count": omitted_knob_count,
     }
 
 
