@@ -133,8 +133,8 @@ tools:
       additionalProperties: false
       description: At least one of first_frame, last_frame, fps, or format is required.
       properties:
-        first_frame: {type: integer, minimum: 0, maximum: 1000000000, description: Start frame; must not exceed the effective last frame.}
-        last_frame: {type: integer, minimum: 0, maximum: 1000000000, description: End frame; must not be below the effective first frame.}
+        first_frame: {type: integer, minimum: -1000000000, maximum: 1000000000, description: Start frame (may be negative for handles); must not exceed the effective last frame.}
+        last_frame: {type: integer, minimum: -1000000000, maximum: 1000000000, description: End frame (may be negative); must not be below the effective first frame.}
         fps: {type: number, exclusiveMinimum: 0, maximum: 1000, description: Playback frame rate.}
         format: {type: string, minLength: 1, maxLength: 256, description: Exact format name from the enumerated format list.}
     read_only: false
@@ -160,8 +160,8 @@ tools:
           type: boolean
           default: false
           description: Explicitly allow clearing a modified current script without saving it.
-        first_frame: {type: integer, minimum: 0, maximum: 1000000000, description: Start frame; must be provided together with last_frame.}
-        last_frame: {type: integer, minimum: 0, maximum: 1000000000, description: End frame; must be provided together with first_frame.}
+        first_frame: {type: integer, minimum: -1000000000, maximum: 1000000000, description: Start frame (may be negative for handles); must be provided together with last_frame.}
+        last_frame: {type: integer, minimum: -1000000000, maximum: 1000000000, description: End frame (may be negative); must be provided together with first_frame.}
         fps: {type: number, exclusiveMinimum: 0, maximum: 1000, description: Playback frame rate.}
         format: {type: string, minLength: 1, maxLength: 256, description: Exact format name from the enumerated format list.}
     read_only: false

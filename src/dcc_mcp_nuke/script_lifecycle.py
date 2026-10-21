@@ -40,15 +40,15 @@ def get_root_settings(nuke: Any, *, max_formats: int = 128) -> dict[str, Any]:
     fps = _read_fps_value(_root_knob(nuke, "fps"))
     format_knob = _root_knob(nuke, "format")
     format_value = _read_format_value(format_knob)
-    enum = _knob_enum(format_knob, max_formats)
+    formats, format_count, format_truncated = _describe_formats(nuke, max_formats)
     return {
         "first_frame": first,
         "last_frame": last,
         "fps": fps,
         "format": format_value,
-        "available_formats": [] if enum is None else enum["values"],
-        "available_format_count": 0 if enum is None else enum["count"],
-        "available_formats_truncated": False if enum is None else enum["truncated"],
+        "available_formats": formats,
+        "available_format_count": format_count,
+        "available_formats_truncated": format_truncated,
     }
 
 
@@ -123,32 +123,39 @@ def paste_nodes(nuke: Any, path: str, *, max_reported_nodes: int = 256) -> dict[
     _bounded_int("max_reported_nodes", max_reported_nodes, 1, 1000)
     target = _validate_script_path(path)
     before = _graph_snapshot(nuke)
+    # nodePaste connects pasted nodes into any currently-selected node, so deselect
+    # first to keep the paste purely additive, then restore the prior selection.
+    selection = _capture_selection(nuke)
+    _set_selection(selection, False)
     try:
-        nuke.nodePaste(str(target))
-    except Exception:
-        _recover_added(nuke, before)
-        raise ScriptLifecycleRuntimeError("failed to paste Nuke nodes") from None
+        try:
+            nuke.nodePaste(str(target))
+        except Exception:
+            _recover_added(nuke, before)
+            raise ScriptLifecycleRuntimeError("failed to paste Nuke nodes") from None
 
-    after = _graph_snapshot(nuke)
-    if any(identity not in after for identity in before):
-        _recover_added(nuke, before)
-        raise ScriptLifecycleRuntimeError("paste removed pre-existing nodes")
-    added_identities = [identity for identity in after if identity not in before]
-    if not added_identities:
-        raise ScriptLifecycleRuntimeError("paste did not add any nodes")
+        after = _graph_snapshot(nuke)
+        if any(identity not in after for identity in before):
+            _recover_added(nuke, before)
+            raise ScriptLifecycleRuntimeError("paste removed pre-existing nodes")
+        added_identities = [identity for identity in after if identity not in before]
+        if not added_identities:
+            raise ScriptLifecycleRuntimeError("paste did not add any nodes")
 
-    added = []
-    for identity in added_identities[:max_reported_nodes]:
-        node = after[identity]
-        added.append({"name": str(node.name()), "class": str(node.Class())})
-    return {
-        "path": str(target),
-        "added_node_count": len(added_identities),
-        "returned_added_count": len(added),
-        "truncated": len(added_identities) > max_reported_nodes,
-        "added_nodes": added,
-        "preserved_node_count": len(before),
-    }
+        added = []
+        for identity in added_identities[:max_reported_nodes]:
+            node = after[identity]
+            added.append({"name": str(node.name()), "class": str(node.Class())})
+        return {
+            "path": str(target),
+            "added_node_count": len(added_identities),
+            "returned_added_count": len(added),
+            "truncated": len(added_identities) > max_reported_nodes,
+            "added_nodes": added,
+            "preserved_node_count": len(before),
+        }
+    finally:
+        _restore_selection(selection)
 
 
 def _apply_root_settings(
@@ -169,26 +176,35 @@ def _apply_root_settings(
         last_frame = _validate_frame("last_frame", last_frame)
     if fps is not None:
         fps = _validate_fps(fps)
+    format_obj = None
     if format is not None:
         _validate_name("format", format)
-        _require_format(nuke, format)
+        format_obj = _require_format(nuke, format)
     _validate_range(eff_first, eff_last)
 
+    # ``requested`` holds the scalar used for readback comparison; ``write_values``
+    # holds the value actually written. A Format_Knob is set with a Format object,
+    # not the format name string.
     requested: dict[str, Any] = {}
+    write_values: dict[str, Any] = {}
     if first_frame is not None:
         requested["first_frame"] = first_frame
+        write_values["first_frame"] = first_frame
     if last_frame is not None:
         requested["last_frame"] = last_frame
+        write_values["last_frame"] = last_frame
     if fps is not None:
         requested["fps"] = fps
+        write_values["fps"] = fps
     if format is not None:
         requested["format"] = format
+        write_values["format"] = format_obj
 
     knobs = {label: _root_knob(nuke, label) for label in requested}
     previous = {label: knob.value() for label, knob in knobs.items()}
     try:
-        for label, value in requested.items():
-            knobs[label].setValue(value)
+        for label in requested:
+            knobs[label].setValue(write_values[label])
         _verify_root_readback(knobs, requested)
     except ScriptLifecycleError:
         _restore_root(knobs, previous)
@@ -221,13 +237,19 @@ def _restore_root(knobs: dict[str, Any], previous: dict[str, Any]) -> None:
         raise ScriptLifecycleRuntimeError("root settings rollback failed") from None
 
 
-def _require_format(nuke: Any, name: str) -> None:
-    knob = _root_knob(nuke, "format")
-    enum = _knob_enum(knob, _MAX_ENUM_ITEMS)
-    if enum is None or not enum["values"]:
+def _require_format(nuke: Any, name: str) -> Any:
+    """Return the Format object matching ``name``; reject unknown names.
+
+    Nuke's ``Format_Knob`` has no ``values()``; the enumerated format list comes
+    from ``nuke.formats()`` (a list of ``Format`` objects, named via ``Format.name()``).
+    """
+    formats = _enumerate_format_objects(nuke)
+    if not formats:
         raise ScriptLifecycleRuntimeError("Root does not expose an enumerated format list")
-    if name not in enum["values"]:
-        raise ScriptLifecycleValidationError("format is not in the enumerated format list")
+    for fmt in formats:
+        if _format_name(fmt) == name:
+            return fmt
+    raise ScriptLifecycleValidationError("format is not in the enumerated format list")
 
 
 def _read_frame_value(knob: Any) -> int:
@@ -252,10 +274,20 @@ def _read_fps_value(knob: Any) -> float:
 
 
 def _read_format_value(knob: Any) -> Any:
+    """Read a Format_Knob value as a format-name string.
+
+    Nuke's ``Format_Knob.value()`` returns a ``Format`` object, not a string; the
+    stable public identity is the format name from ``Format.name()``.
+    """
     value = _knob_value(knob)
     if value is None:
         return None
-    return value if isinstance(value, str) else str(value)
+    name = _format_name(value)
+    if name is not None:
+        return name
+    if isinstance(value, str):
+        return value
+    return str(value)
 
 
 def _knob_value(knob: Any) -> Any:
@@ -268,19 +300,94 @@ def _knob_value(knob: Any) -> Any:
         raise ScriptLifecycleRuntimeError("root knob value could not be read") from None
 
 
-def _knob_enum(knob: Any, cap: int) -> dict[str, Any] | None:
-    values_fn = getattr(knob, "values", None)
-    if not callable(values_fn):
+def _format_name(fmt: Any) -> str | None:
+    """Return a Nuke ``Format`` object's name, or ``None`` when unreadable."""
+    name_fn = getattr(fmt, "name", None)
+    if not callable(name_fn):
         return None
     try:
-        raw = values_fn()
+        name = name_fn()
     except Exception:
         return None
+    if isinstance(name, str) and name and len(name) <= _MAX_NAME_LENGTH:
+        return name
+    return None
+
+
+def _enumerate_format_objects(nuke: Any) -> list[Any]:
+    """Enumerate ``Format`` objects from ``nuke.formats()``, dropping unreadable items."""
+    formats_fn = getattr(nuke, "formats", None)
+    if not callable(formats_fn):
+        return []
+    try:
+        raw = formats_fn()
+    except Exception:
+        return []
     if not isinstance(raw, (list, tuple)):
-        return None
-    names = [item for item in raw if isinstance(item, str) and item and len(item) <= _MAX_NAME_LENGTH]
+        return []
+    return [fmt for fmt in raw if _format_name(fmt) is not None]
+
+
+def _enumerate_format_names(nuke: Any) -> list[str]:
+    names: list[str] = []
+    for fmt in _enumerate_format_objects(nuke):
+        name = _format_name(fmt)
+        if name is not None:
+            names.append(name)
+    return list(dict.fromkeys(names))
+
+
+def _describe_formats(nuke: Any, cap: int) -> tuple[list[str], int, bool]:
+    names = _enumerate_format_names(nuke)
     total = len(names)
-    return {"values": names[:cap], "count": total, "truncated": total > cap}
+    return names[:cap], total, total > cap
+
+
+def _capture_selection(nuke: Any) -> dict[Any, bool]:
+    """Capture each node's ``selected`` knob state (gizmos.py selection idiom)."""
+    selected: dict[Any, bool] = {}
+    try:
+        nodes = list(nuke.allNodes(recurseGroups=True))
+    except Exception:
+        return selected
+    for node in nodes:
+        knob_fn = getattr(node, "knob", None)
+        if not callable(knob_fn):
+            continue
+        try:
+            knob = knob_fn("selected")
+        except Exception:
+            continue
+        if knob is None:
+            continue
+        try:
+            selected[node] = bool(knob.value())
+        except Exception:
+            continue
+    return selected
+
+
+def _set_selection(selection: dict[Any, bool], value: bool) -> None:
+    for node in selection:
+        setter = getattr(node, "setSelected", None)
+        if not callable(setter):
+            continue
+        try:
+            setter(value)
+        except Exception:
+            continue
+
+
+def _restore_selection(selection: dict[Any, bool]) -> None:
+    for node, was_selected in selection.items():
+        setter = getattr(node, "setSelected", None)
+        if not callable(setter):
+            continue
+        try:
+            setter(was_selected)
+        except Exception:
+            # Best-effort: a changed or deleted node must not mask the paste result.
+            continue
 
 
 def _validate_script_path(path: Any) -> Path:
@@ -337,8 +444,10 @@ def _root_knob(nuke: Any, name: str) -> Any:
 
 
 def _validate_frame(label: str, value: int) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= _MAX_FRAME:
-        raise ScriptLifecycleValidationError(f"{label} must be an integer between 0 and {_MAX_FRAME}")
+    # Nuke frame numbers may be negative (e.g. handles before frame 0), so bound
+    # symmetrically rather than requiring a non-negative frame.
+    if isinstance(value, bool) or not isinstance(value, int) or not -_MAX_FRAME <= value <= _MAX_FRAME:
+        raise ScriptLifecycleValidationError(f"{label} must be an integer between -{_MAX_FRAME} and {_MAX_FRAME}")
     return value
 
 

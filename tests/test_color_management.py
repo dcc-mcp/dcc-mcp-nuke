@@ -93,6 +93,25 @@ class FakeRoot:
         return self._knobs[name]
 
 
+class RestoreFaultKnob:
+    """Wrap a knob so restoring a specific previous value raises."""
+
+    def __init__(self, knob, raise_on):
+        self._knob = knob
+        self._raise_on = set(raise_on)
+
+    def value(self):
+        return self._knob.value()
+
+    def values(self):
+        return self._knob.values()
+
+    def setValue(self, value):
+        if value in self._raise_on:
+            raise RuntimeError("restore fault")
+        self._knob.setValue(value)
+
+
 class FakeNuke:
     def __init__(self, root_knobs=None, nodes=(), colorspaces=None):
         self._root = FakeRoot(root_knobs or {})
@@ -105,7 +124,7 @@ class FakeNuke:
     def toNode(self, name):
         return next((node for node in self.nodes if node.name() == name), None)
 
-    def colorspaces(self, *_args):
+    def getOcioColorSpaces(self):
         if self._colorspaces is None:
             raise RuntimeError("colorspaces unavailable")
         return list(self._colorspaces)
@@ -162,6 +181,29 @@ def test_describe_color_management_reflects_unavailable_ocio_as_empty_enumeratio
     assert result["color_management"] == "Nuke"
     assert result["ocio_config"] is None
     assert result["available_ocio_configs"] == []
+    assert result["colorspaces"] == []
+    assert result["colorspaces_available"] is False
+
+
+def test_describe_color_management_ignores_non_get_ocio_color_spaces_surfaces():
+    class LegacyNuke:
+        def __init__(self):
+            self._root = FakeRoot(_ocio_root())
+
+        def root(self):
+            return self._root
+
+        def colorspaces(self, *_args):
+            return ["legacy-linear", "legacy-sRGB"]
+
+        def getColorspaceList(self, *_args):
+            return ["legacy-linear", "legacy-sRGB"]
+
+    result = describe_color_management(LegacyNuke())
+
+    # nuke.colorspaces is not callable and getColorspaceList needs a knob; only
+    # getOcioColorSpaces is authoritative, so a host exposing only the wrong
+    # surfaces yields an empty enumeration rather than a self-fulfilling list.
     assert result["colorspaces"] == []
     assert result["colorspaces_available"] is False
 
@@ -294,6 +336,24 @@ def test_set_display_transform_rejects_wrong_node_class():
 
     with pytest.raises(ColorManagementValidationError):
         set_display_transform(nuke, "Grade1", "sRGB", "Raw")
+
+
+def test_set_display_transform_restores_display_even_when_view_rollback_fails():
+    display = FakeKnob("sRGB", values=["sRGB", "rec709"])
+    # The requested view silently fails to apply, forcing a readback mismatch.
+    view = FakeKnob("Raw", values=["Raw", "Film"], reject={"Film"})
+    # Restoring the previous view faults; the display must still be rolled back.
+    view_knob = RestoreFaultKnob(view, raise_on={"Raw"})
+    node = FakeNode("OCIODisplay1", "OCIODisplay", {"display": display, "view": view_knob})
+    nuke = FakeNuke(nodes=[node])
+
+    with pytest.raises(ColorManagementRuntimeError) as excinfo:
+        set_display_transform(nuke, "OCIODisplay1", "rec709", "Film")
+
+    # Display is restored before the (failing) view restore, so it is never left
+    # modified; the rollback failure is surfaced after both restores are attempted.
+    assert display.value() == "sRGB"
+    assert "rollback" in str(excinfo.value)
 
 
 def test_color_management_skill_declares_bounded_main_thread_verbs():
