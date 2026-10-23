@@ -248,3 +248,59 @@ def test_truncated_deep_node_identity_is_reported_without_aborting():
     assert warning["node"] == node.fullName()[:256]
     assert result["checked_references"] == 1
     assert not result["issues"]["error"]
+
+
+@pytest.mark.parametrize("mode", ["hold", "loop", "bounce"])
+@pytest.mark.parametrize("sequence", [False, True])
+def test_extended_read_covers_root_and_limited_write_without_missing_outside_frames(tmp_path, mode, sequence):
+    filename = "image.0001.exr" if sequence else "image.png"
+    (tmp_path / filename).write_bytes(b"image")
+    read = Node(
+        "Read",
+        file=str(tmp_path / ("image.%04d.exr" if sequence else filename)),
+        first=1,
+        last=1,
+        before=mode,
+        after=mode,
+    )
+    write = Node("Write", "Write", use_limit=True, first=-100, last=200)
+    result = check_input_health(Nuke([read, write], first=101, last=200), include_write_ranges=True, max_frames=1)
+    assert not result["issues"]["error"]
+    assert not result["issues"]["warning"]
+
+
+@pytest.mark.parametrize(
+    "first,last,before,after,mismatch",
+    [
+        (0, 1, "hold", "black", False),
+        (1, 4, "error", "loop", False),
+        (0, 1, "black", "hold", True),
+        (1, 4, "bounce", "error", True),
+        (0, 4, "hold", "unknown", True),
+    ],
+)
+def test_each_read_boundary_uses_its_own_extension_mode(tmp_path, first, last, before, after, mismatch):
+    image = tmp_path / "still.png"
+    image.write_bytes(b"image")
+    read = Node("Read", file=str(image), first=1, last=3, before=before, after=after)
+    result = check_input_health(Nuke([read], first=first, last=last))
+    assert ("range_mismatch" in _codes(result, "warning")) is mismatch
+
+
+def test_hold_does_not_hide_missing_frames_inside_the_read_range(tmp_path):
+    for frame in (1, 3):
+        (tmp_path / f"image.{frame:04d}.exr").write_bytes(b"image")
+    read = Node("Read", file=str(tmp_path / "image.%04d.exr"), first=1, last=3, before="hold", after="hold")
+    result = check_input_health(Nuke([read], first=-10, last=20))
+    assert _codes(result, "error")["missing_frames"]["frame_ranges"] == [[2, 2]]
+    assert "range_mismatch" not in _codes(result, "warning")
+
+
+@pytest.mark.parametrize("dynamic", ["hasExpression", "isAnimated"])
+def test_dynamic_boundary_modes_cannot_prove_coverage(tmp_path, dynamic):
+    image = tmp_path / "still.png"
+    image.write_bytes(b"image")
+    read = Node("Read", file=str(image), first=1, last=1, before="hold", after="hold")
+    setattr(read.knobs()["after"], dynamic, lambda: True)
+    result = check_input_health(Nuke([read], first=101, last=200))
+    assert "range_mismatch" in _codes(result, "warning")

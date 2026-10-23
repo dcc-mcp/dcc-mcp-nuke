@@ -110,12 +110,13 @@ def check_input_health(
             report("warning", "node_identity_unavailable", name, **detail)
             continue
         node_range = _range(node, "first", "last")
-        if node_range and (node_range[0] > root_range[0] or node_range[1] < root_range[1]):
+        extension = (_extends_range(node, "before"), _extends_range(node, "after"))
+        if node_range and _uncovered_range(root_range, node_range, extension):
             report(
                 "warning", "range_mismatch", name, node_range=list(node_range), root_range=list(root_range), **detail
             )
         if node_range:
-            mismatched = [bounds for bounds in write_ranges if bounds[0] < node_range[0] or bounds[1] > node_range[1]]
+            mismatched = [bounds for bounds in write_ranges if _uncovered_range(bounds, node_range, extension)]
             if mismatched:
                 report(
                     "warning",
@@ -128,6 +129,13 @@ def check_input_health(
                 )
         expected_ranges = [root_range, *write_ranges]
         if node_range:
+            expected_ranges = [
+                (
+                    max(first, node_range[0]) if extension[0] else first,
+                    min(last, node_range[1]) if extension[1] else last,
+                )
+                for first, last in expected_ranges
+            ]
             expected_ranges.append(node_range)
         if reference["animated"]:
             report("warning", "animated_path_current_frame_only", name, **detail)
@@ -228,6 +236,20 @@ def _range(node, first, last):
     ):
         return None
     return tuple(map(int, values)) if values[0] <= values[1] else None
+
+
+def _extends_range(node, side):
+    knob = node.knobs().get(side)
+    if knob is None:
+        return False
+    try:
+        return not knob.hasExpression() and not knob.isAnimated() and knob.value() in ("hold", "loop", "bounce")
+    except Exception:
+        return False
+
+
+def _uncovered_range(requested, source, extension):
+    return (requested[0] < source[0] and not extension[0]) or (requested[1] > source[1] and not extension[1])
 
 
 def _sequence_path(reference):
