@@ -64,6 +64,8 @@ Do not run an archive's installer, `init.py`, or `menu.py` as a download step.
    its existing `instantiate_gizmo` tool with the absolute local `gizmo_path`
    and a unique `node_name`. This executes the Gizmo. It is distinct from the
    stricter manifest-based `gizmo_instantiate` API for adapter-managed assets.
+   Both create the class on demand: `nuke.load` itself inserts a Gizmo, so
+   calling it before `createNode` would add an unwanted second instance.
 4. Connect inputs using `nuke-node-graph.connect_input`; inspect exposed knobs
    before setting them. Reuse the existing typed graph tools for already
    registered third-party node classes.
