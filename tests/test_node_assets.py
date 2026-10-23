@@ -59,7 +59,7 @@ class _Node:
     def name(self):
         return self._name
 
-    def setName(self, name):
+    def setName(self, name, **_kwargs):
         self._name = name
 
     def Class(self):
@@ -82,6 +82,25 @@ class _Node:
 
     def hasError(self):
         return False
+
+
+def _gizmo_host(monkeypatch, instance, *, existing=(), create_error=None):
+    graph = list(existing)
+    nuke = ModuleType("nuke")
+    nuke.pluginAddPath = MagicMock()
+    nuke.load = MagicMock()
+    nuke.allNodes = MagicMock(side_effect=lambda **_kwargs: list(graph))
+
+    def create_node(_node_class, **_kwargs):
+        graph.append(instance)
+        if create_error is not None:
+            raise create_error
+        return instance
+
+    nuke.createNode = MagicMock(side_effect=create_node)
+    nuke.delete = MagicMock(side_effect=graph.remove)
+    monkeypatch.setitem(sys.modules, "nuke", nuke)
+    return nuke, graph
 
 
 def test_package_gizmo_groups_nodes_exposes_knobs_and_writes_versioned_asset(tmp_path, monkeypatch):
@@ -186,12 +205,8 @@ def test_instantiate_gizmo_loads_asset_and_applies_exposed_knobs(tmp_path, monke
     instance.addKnob(manifest)
     instance.addKnob(_Knob("bloom_gain", "Bloom Gain"))
 
-    nuke = ModuleType("nuke")
-    nuke.pluginAddPath = MagicMock()
-    nuke.load = MagicMock()
-    nuke.createNode = MagicMock(return_value=instance)
-    nuke.delete = MagicMock()
-    monkeypatch.setitem(sys.modules, "nuke", nuke)
+    instance.setName = MagicMock(wraps=instance.setName)
+    nuke, graph = _gizmo_host(monkeypatch, instance)
 
     result = module.main.__wrapped__(
         gizmo_path=str(target),
@@ -211,8 +226,79 @@ def test_instantiate_gizmo_loads_asset_and_applies_exposed_knobs(tmp_path, monke
     nuke.pluginAddPath.assert_called_once_with(str(tmp_path.resolve()))
     nuke.load.assert_called_once_with("SolarBloom")
     nuke.createNode.assert_called_once_with("SolarBloom", inpanel=False)
+    instance.setName.assert_called_once_with("ShotBloom", uncollide=False)
     assert instance.knob("bloom_gain").value() == 1.4
+    assert graph == [instance]
     nuke.delete.assert_not_called()
+
+
+def test_instantiate_gizmo_refuses_wrong_class_and_removes_created_node(tmp_path, monkeypatch):
+    module = _load_script("instantiate_gizmo.py")
+    target = tmp_path / "SolarBloom.gizmo"
+    target.write_text("Gizmo {}", encoding="utf-8")
+    existing = _Node("Grade1")
+    wrong_class = _Node("Blur1", "Blur")
+    nuke, graph = _gizmo_host(monkeypatch, wrong_class, existing=[existing])
+
+    result = module.main.__wrapped__(gizmo_path=str(target))
+
+    assert result["success"] is False
+    assert "class does not match" in result["error"]
+    assert graph == [existing]
+    nuke.delete.assert_called_once_with(wrong_class)
+
+
+def test_instantiate_gizmo_recovers_attributable_create_failure(tmp_path, monkeypatch):
+    module = _load_script("instantiate_gizmo.py")
+    target = tmp_path / "SolarBloom.gizmo"
+    target.write_text("Gizmo {}", encoding="utf-8")
+    existing = _Node("Grade1")
+    instance = _Node("SolarBloom1", "SolarBloom")
+    nuke, graph = _gizmo_host(
+        monkeypatch, instance, existing=[existing], create_error=RuntimeError("creation failed after adding node")
+    )
+
+    result = module.main.__wrapped__(gizmo_path=str(target))
+
+    assert result["success"] is False
+    assert "creation failed" in result["error"]
+    assert graph == [existing]
+    nuke.delete.assert_called_once_with(instance)
+
+
+def test_instantiate_gizmo_refuses_name_collision_and_preserves_existing_node(tmp_path, monkeypatch):
+    module = _load_script("instantiate_gizmo.py")
+    target = tmp_path / "SolarBloom.gizmo"
+    target.write_text("Gizmo {}", encoding="utf-8")
+    existing = _Node("ShotBloom")
+    instance = _Node("SolarBloom1", "SolarBloom")
+    instance.setName = MagicMock(side_effect=RuntimeError("node name already exists"))
+    nuke, graph = _gizmo_host(monkeypatch, instance, existing=[existing])
+
+    result = module.main.__wrapped__(gizmo_path=str(target), node_name="ShotBloom")
+
+    assert result["success"] is False
+    assert "already exists" in result["error"]
+    assert graph == [existing]
+    assert existing.name() == "ShotBloom"
+    instance.setName.assert_called_once_with("ShotBloom", uncollide=False)
+    nuke.delete.assert_called_once_with(instance)
+
+
+def test_instantiate_gizmo_refuses_inexact_name_readback(tmp_path, monkeypatch):
+    module = _load_script("instantiate_gizmo.py")
+    target = tmp_path / "SolarBloom.gizmo"
+    target.write_text("Gizmo {}", encoding="utf-8")
+    instance = _Node("SolarBloom1", "SolarBloom")
+    instance.setName = MagicMock(side_effect=lambda *_args, **_kwargs: None)
+    nuke, graph = _gizmo_host(monkeypatch, instance)
+
+    result = module.main.__wrapped__(gizmo_path=str(target), node_name="ShotBloom")
+
+    assert result["success"] is False
+    assert "name does not match" in result["error"]
+    assert graph == []
+    nuke.delete.assert_called_once_with(instance)
 
 
 def test_inspect_gizmo_reports_manifest_interface_and_validation(monkeypatch):

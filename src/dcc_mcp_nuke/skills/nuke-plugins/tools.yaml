@@ -1,0 +1,91 @@
+tools:
+  - name: inspect_plugin_environment
+    description: >-
+      Inspect ordered Nuke plug-in paths, available/loaded files, registered
+      node classes and explicit local task-root metadata without activating
+      paths, loading plug-ins, executing scripts, or creating nodes. Report
+      exact class registration separately from filename candidates and runtime
+      ABI/license validation, with bounded lists and incomplete-scan status.
+    input_schema:
+      type: object
+      additionalProperties: false
+      properties:
+        required_node_classes:
+          type: array
+          maxItems: 256
+          uniqueItems: true
+          items: {type: string, minLength: 1, maxLength: 128, pattern: "^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$"}
+        task_roots:
+          type: array
+          maxItems: 16
+          uniqueItems: true
+          items: {type: string, minLength: 1, maxLength: 8192}
+        name_filter: {type: string, maxLength: 128, default: ""}
+        max_items: {type: integer, minimum: 1, maximum: 1024, default: 128}
+        max_scan_entries: {type: integer, minimum: 1, maximum: 100000, default: 4096}
+    output_schema:
+      type: object
+      required: [host, probes, plugin_paths, available_plugins, loaded_plugins, registered_node_classes, task_roots, task_assets, requirements, issues, task_scan_incomplete, scope]
+      properties:
+        host:
+          type: object
+          required: [nuke_version, python_version, platform]
+          properties:
+            nuke_version: {type: string, maxLength: 128}
+            python_version: {type: string}
+            platform: {type: string}
+        probes: {type: object}
+        plugin_paths: {type: array, maxItems: 1024, items: {type: object}}
+        plugin_paths_count: {type: integer, minimum: 0}
+        plugin_paths_truncated: {type: boolean}
+        available_plugins: {type: array, maxItems: 1024, items: {type: object}}
+        available_plugins_count: {type: integer, minimum: 0}
+        available_plugins_truncated: {type: boolean}
+        loaded_plugins: {type: array, maxItems: 1024, items: {type: object}}
+        loaded_plugins_count: {type: integer, minimum: 0}
+        loaded_plugins_truncated: {type: boolean}
+        registered_node_classes: {type: array, maxItems: 1024, items: {type: string, maxLength: 128}}
+        registered_node_classes_count: {type: integer, minimum: 0}
+        registered_node_classes_truncated: {type: boolean}
+        task_roots: {type: array, maxItems: 16, items: {type: object}}
+        task_assets: {type: array, maxItems: 1024, items: {type: object}}
+        task_assets_count: {type: integer, minimum: 0}
+        task_assets_truncated: {type: boolean}
+        task_scan_incomplete: {type: boolean}
+        requirements:
+          type: array
+          maxItems: 256
+          items:
+            type: object
+            required: [node_class, status, runtime_validation]
+            properties:
+              node_class: {type: string, maxLength: 128}
+              status: {type: string, enum: [registered, discoverable_candidate, not_registered, unverified]}
+              runtime_validation: {type: string, const: not_run}
+        issues: {type: array, maxItems: 5, items: {type: object}}
+        scope: {type: string}
+    read_only: true
+    destructive: false
+    idempotent: true
+    execution: sync
+    job_strategy: monolithic
+    affinity: main
+    enforce_thread_affinity: true
+    timeout_hint_secs: 30
+    call_examples:
+      - arguments:
+          required_node_classes: [Erode_Fine, Cryptomatte]
+          name_filter: erode
+          max_items: 64
+        note: Inspect exact registration separately from available file candidates.
+      - arguments:
+          task_roots: ["C:/Temp/nuke-task/gizmos"]
+          required_node_classes: [Erode_Fine]
+          max_items: 32
+        note: Replace this Windows example with an explicit local task-owned directory; inspection does not activate it.
+    annotations:
+      read_only_hint: true
+      destructive_hint: false
+      idempotent_hint: true
+      open_world_hint: false
+    source_file: scripts/inspect_plugin_environment.py
