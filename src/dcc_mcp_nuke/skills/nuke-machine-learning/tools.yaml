@@ -11,19 +11,35 @@ tools:
         max_scan_entries: {type: integer, minimum: 1, maximum: 20000, default: 4096}
     output_schema:
       type: object
-      required: [host, host_flavor, nodes, model_assets, model_asset_count, models_truncated, scan_incomplete, scanned_entries, model_loading_performed, scope]
+      required: [success, message, error, prompt, context]
       properties:
-        host: {type: object}
-        host_flavor: {type: string, enum: [nuke, nukex, nukestudio]}
-        nodes: {type: array, maxItems: 6, items: {type: object}}
-        model_assets: {type: array, maxItems: 256, items: {type: object}}
-        model_asset_count: {type: integer, minimum: 0}
-        models_truncated: {type: boolean}
-        scan_incomplete: {type: boolean}
-        scanned_entries: {type: integer, minimum: 0, maximum: 20000}
-        model_loading_performed: {type: boolean, const: false}
-        scope: {type: string}
-        node: {type: object}
+        success: {type: boolean}
+        message: {type: string}
+        error: {type: [string, 'null']}
+        prompt: {type: [string, 'null']}
+        context: {type: object}
+      oneOf:
+        - properties:
+            success: {const: true}
+            error: {type: 'null'}
+            context:
+              type: object
+              required: [host, host_flavor, nodes, model_assets, model_asset_count, models_truncated, scan_incomplete, scanned_entries, model_loading_performed, scope]
+              properties:
+                host: {type: object}
+                host_flavor: {type: string, enum: [nuke, nukex, nukestudio]}
+                nodes: {type: array, maxItems: 6, items: {type: object}}
+                model_assets: {type: array, maxItems: 256, items: {type: object}}
+                model_asset_count: {type: integer, minimum: 0}
+                models_truncated: {type: boolean}
+                scan_incomplete: {type: boolean}
+                scanned_entries: {type: integer, minimum: 0, maximum: 20000}
+                model_loading_performed: {type: boolean, const: false}
+                scope: {type: string}
+                node: {type: object}
+        - properties:
+            success: {const: false}
+            error: {type: string}
     read_only: true
     destructive: false
     idempotent: true
@@ -71,15 +87,31 @@ tools:
             outputScale: {type: array, minItems: 2, maxItems: 2, items: {type: number, exclusiveMinimum: 0, maximum: 16}}
     output_schema:
       type: object
-      required: [node, node_class, host_flavor, settings, inputs, device, execution_started]
+      required: [success, message, error, prompt, context]
       properties:
-        node: {type: string}
-        node_class: {type: string}
-        host_flavor: {type: string}
-        settings: {type: object}
-        inputs: {type: array, maxItems: 2, items: {type: [string, 'null']}}
-        device: {type: string, const: cpu}
-        execution_started: {type: boolean, const: false}
+        success: {type: boolean}
+        message: {type: string}
+        error: {type: [string, 'null']}
+        prompt: {type: [string, 'null']}
+        context: {type: object}
+      oneOf:
+        - properties:
+            success: {const: true}
+            error: {type: 'null'}
+            context:
+              type: object
+              required: [node, node_class, host_flavor, settings, inputs, device, execution_started]
+              properties:
+                node: {type: string}
+                node_class: {type: string}
+                host_flavor: {type: string}
+                settings: {type: object}
+                inputs: {type: array, maxItems: 2, items: {type: [string, 'null']}}
+                device: {type: string, const: cpu}
+                execution_started: {type: boolean, const: false}
+        - properties:
+            success: {const: false}
+            error: {type: string}
     read_only: false
     destructive: false
     idempotent: false
@@ -99,16 +131,32 @@ tools:
         max_runtime_seconds: {type: integer, minimum: 1, maximum: 120, default: 60}
     output_schema:
       type: object
-      required: [status, operation, node, device, job_directory, output_path, artifacts, live_graph_restored]
+      required: [success, message, error, prompt, context]
       properties:
-        status: {type: string, const: completed}
-        operation: {type: string, const: train}
-        node: {type: string}
-        device: {type: string, const: cpu}
-        job_directory: {type: string}
-        output_path: {type: string}
-        artifacts: {type: array, minItems: 1, maxItems: 128, items: {type: object}}
-        live_graph_restored: {type: boolean, const: true}
+        success: {type: boolean}
+        message: {type: string}
+        error: {type: [string, 'null']}
+        prompt: {type: [string, 'null']}
+        context: {type: object}
+      oneOf:
+        - properties:
+            success: {const: true}
+            error: {type: 'null'}
+            context:
+              type: object
+              required: [status, operation, node, device, job_directory, output_path, artifacts, live_graph_restored]
+              properties:
+                status: {type: string, const: completed}
+                operation: {type: string, const: train}
+                node: {type: string}
+                device: {type: string, const: cpu}
+                job_directory: {type: string}
+                output_path: {type: string}
+                artifacts: {type: array, minItems: 1, maxItems: 128, items: {type: object}}
+                live_graph_restored: {type: boolean, const: true}
+        - properties:
+            success: {const: false}
+            error: {type: string}
     read_only: false
     destructive: false
     idempotent: false
@@ -130,16 +178,32 @@ tools:
         max_runtime_seconds: {type: integer, minimum: 1, maximum: 120, default: 60}
     output_schema:
       type: object
-      required: [status, operation, node, device, job_directory, output_path, artifacts, live_graph_restored]
+      required: [success, message, error, prompt, context]
       properties:
-        status: {type: string, const: completed}
-        operation: {type: string, const: convert}
-        node: {type: string}
-        device: {type: string, const: cpu}
-        job_directory: {type: string}
-        output_path: {type: string}
-        artifacts: {type: array, minItems: 1, maxItems: 128, items: {type: object}}
-        live_graph_restored: {type: boolean, const: true}
+        success: {type: boolean}
+        message: {type: string}
+        error: {type: [string, 'null']}
+        prompt: {type: [string, 'null']}
+        context: {type: object}
+      oneOf:
+        - properties:
+            success: {const: true}
+            error: {type: 'null'}
+            context:
+              type: object
+              required: [status, operation, node, device, job_directory, output_path, artifacts, live_graph_restored]
+              properties:
+                status: {type: string, const: completed}
+                operation: {type: string, const: convert}
+                node: {type: string}
+                device: {type: string, const: cpu}
+                job_directory: {type: string}
+                output_path: {type: string}
+                artifacts: {type: array, minItems: 1, maxItems: 128, items: {type: object}}
+                live_graph_restored: {type: boolean, const: true}
+        - properties:
+            success: {const: false}
+            error: {type: string}
     read_only: false
     destructive: false
     idempotent: false
