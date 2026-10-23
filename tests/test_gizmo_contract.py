@@ -90,6 +90,7 @@ class FakeNuke:
         self.serialized = serialized
         self.created = []
         self.deleted = []
+        self.loaded = []
         self.nodes_by_name = {group.name(): group}
         self.plugin_paths = []
 
@@ -111,8 +112,11 @@ class FakeNuke:
     def pluginAddPath(self, path):
         self.plugin_paths.append(path)
 
-    def load(self, _name):
-        return True
+    def load(self, name):
+        node = Node(f"{name}_loaded", "Gizmo")
+        self.loaded.append(node)
+        self.nodes_by_name[node.name()] = node
+        return node
 
     def createNode(self, node_class, inpanel=False):
         node = Node(f"{node_class}1", node_class, self.group.nodes())
@@ -126,6 +130,7 @@ class FakeNuke:
 
     def delete(self, node):
         self.deleted.append(node)
+        self.nodes_by_name = {name: existing for name, existing in self.nodes_by_name.items() if existing is not node}
 
 
 def contract():
@@ -270,3 +275,24 @@ def test_validate_reports_hash_interface_dependencies_and_forbidden_code(tmp_pat
     assert report["forbidden_code"] == []
     assert report["clean_load"]["passed"] is True
     assert report["internal_node_count"] == 2
+
+
+@pytest.mark.parametrize("operation", ["instantiate", "validate"])
+def test_registry_operations_load_on_demand_without_extra_generic_gizmo(tmp_path, monkeypatch, operation):
+    monkeypatch.setenv("DCC_MCP_NUKE_PLUGIN_ROOT", str(tmp_path))
+    group = Node("AtmosphereGroup", "Group", [Node("Input1", "Input"), Node("Grade1")])
+    nuke = FakeNuke(group)
+    asset = gizmos.create_from_group(nuke, group_node=group.name(), conflict_policy="write_versioned", **contract())
+    nuke.manifest_json = Path(asset["manifest_path"]).read_text()
+    nuke.nodes_by_name["Beauty"] = Node("Beauty", "Read")
+    before = set(nuke.nodes_by_name.values())
+
+    if operation == "instantiate":
+        result = gizmos.instantiate(nuke, gizmo_id="dcc.atmosphere_glow", input_nodes={"beauty": "Beauty"})
+        added = set(nuke.nodes_by_name.values()) - before
+        assert len(added) == 1
+        assert next(iter(added)).Class() == result["node_class"] == asset["node_class"]
+    else:
+        assert gizmos.validate(nuke, "dcc.atmosphere_glow")["valid"] is True
+        assert set(nuke.nodes_by_name.values()) == before
+    assert nuke.loaded == []

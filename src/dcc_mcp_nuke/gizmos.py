@@ -444,7 +444,6 @@ def instantiate(
         node = existing
     else:
         nuke.pluginAddPath(str(target.parent))
-        nuke.load(manifest["node_class"])
         node = nuke.createNode(manifest["node_class"], inpanel=False)
         identity = _read_node_manifest(node)
         if identity.get("gizmo_id") != gizmo_id or identity.get("version") != manifest["version"]:
@@ -542,7 +541,6 @@ def validate(
     issues = []
     try:
         nuke.pluginAddPath(str(target.parent))
-        nuke.load(manifest["node_class"])
         node = nuke.createNode(manifest["node_class"], inpanel=False)
         identity = _read_node_manifest(node)
         if identity.get("gizmo_id") != gizmo_id or identity.get("version") != manifest["version"]:

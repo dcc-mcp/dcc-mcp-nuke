@@ -4,6 +4,8 @@ from pathlib import Path
 
 from dcc_mcp_core.skill import skill_entry, skill_error, skill_success
 
+from dcc_mcp_nuke.node_graph import create_node_handle
+
 _IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 
 
@@ -36,10 +38,7 @@ def main(gizmo_path, node_name=None, knob_values=None, **_kwargs):
     node = None
     try:
         nuke.pluginAddPath(str(target.parent))
-        nuke.load(asset_name)
-        node = nuke.createNode(asset_name, inpanel=False)
-        if node_name:
-            node.setName(node_name)
+        node = create_node_handle(nuke, asset_name, name=node_name)
 
         missing = [name for name in values if node.knob(name) is None]
         if missing:

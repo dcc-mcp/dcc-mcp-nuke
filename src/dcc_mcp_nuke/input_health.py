@@ -10,9 +10,9 @@ from statistics import median
 from typing import Any
 
 from dcc_mcp_nuke.file_references import list_file_references, reference_path, sequence_files, sequence_pattern
+from dcc_mcp_nuke.plugins import plugin_class_names
 
 _OUTPUT_CLASSES = {"Write", "DeepWrite", "WriteGeo"}
-_PLUGIN_EXTENSIONS = {".dll", ".so", ".dylib", ".gizmo", ".py", ".tcl", ".ofx"}
 
 
 def check_input_health(
@@ -178,13 +178,7 @@ def check_input_health(
     inventory_available = True
     try:
         inventory = nuke.plugins(nuke.ALL | nuke.REGISTERED)
-        available = set()
-        for plugin in inventory:
-            name = str(plugin)
-            available.add(name)
-            path = Path(name.replace("\\", "/"))
-            if path.suffix.lower() in _PLUGIN_EXTENSIONS:
-                available.add(path.stem)
+        available = plugin_class_names(inventory)
     except Exception:
         inventory_available = False
         available = set()

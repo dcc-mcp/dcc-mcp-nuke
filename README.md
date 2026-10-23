@@ -222,6 +222,14 @@ identity checks. CI obtains the Install SOP schema from the isolated minimum-
 Core environment used for the installed-wheel smoke rather than its ambient
 interpreter.
 
+The `nuke-plugins` skill inspects ordered host search paths, available and loaded
+plug-in files, registered classes, and explicitly named local task roots without
+loading code or changing the graph. Required classes distinguish registration
+from filename candidates and incomplete checks; ABI, licenses and rendering
+remain separate verification steps. Use the existing node-graph and Gizmo tools
+after selecting a trusted asset. The skill's source references explain where to
+find Gizmos and how to review, pin, download and use them.
+
 The `nuke-node-assets` skill packages reusable, versioned Gizmos with an
 explicit public knob interface, instantiates saved assets, and validates live
 instances. Its registered tools use `DCC_MCP_NUKE_PLUGIN_ROOT`, stable ids and
