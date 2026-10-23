@@ -107,10 +107,14 @@ def test_node_graph_skill_declares_bounded_main_thread_crud():
 
     manifest = yaml.safe_load((SKILL_ROOT / "tools.yaml").read_text(encoding="utf-8"))
     tools = {tool["name"]: tool for tool in manifest["tools"]}
-    assert set(tools) == {"connect_input", "create_node", "delete_node", "get_knob", "set_knob"}
+    assert set(tools) == {"auto_layout_nodes", "connect_input", "create_node", "delete_node", "get_knob", "set_knob"}
     assert all(tool["affinity"] == "main" for tool in tools.values())
     assert all(tool["input_schema"]["additionalProperties"] is False for tool in tools.values())
     assert tools["connect_input"]["input_schema"]["properties"]["input_index"]["maximum"] == 63
+    layout = tools["auto_layout_nodes"]
+    assert layout["input_schema"]["properties"]["node_names"]["maxItems"] == 256
+    assert layout["input_schema"]["properties"]["node_names"]["uniqueItems"] is True
+    assert layout["idempotent"] is False
 
 
 def test_list_node_graph_reports_topology_and_bounded_knob_values():
