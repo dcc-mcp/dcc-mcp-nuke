@@ -72,57 +72,59 @@ MCP server in Nuke and uses Nuke's main-thread execution API for scene tools.
 See [install.md](install.md) for the agent-first install, verify, upgrade, and
 receipt-driven uninstall workflow on Windows, macOS, and Linux.
 
-## Host flavors: Nuke, NukeX, and Nuke Studio
+## One Nuke family adapter, different runtime contexts
 
-One package covers all three Foundry entry points. Nuke, NukeX, and Nuke Studio
-ship from one installation, share one embedded Python interpreter and one
-`~/.nuke` plug-in profile, and install once. Core registers all three as
-executable stems of a single `dcc-type` (`nuke`), so there is no second
-package, entry point, or release channel to install.
+Use **one repository, one `dcc-mcp-nuke` distribution, one installation lifecycle,
+and one `dcc-type` (`nuke`)** for the supported Nuke, NukeX and Nuke Studio entry
+points. Nuke Studio combines the compositing and Hiero editorial surfaces; it is
+not a second MCP product. Switching a workspace changes the UI context, not the
+adapter identity. Selecting another running process still requires selecting that
+instance, not simply changing a tag.
 
-What differs between them is the feature surface available at runtime. The
-adapter classifies the running entry point as one of three host flavors and
-reports it as server capability metadata:
+This packaging decision does **not** mean every edition, license or host version
+has the same APIs, Python/Qt runtime, startup hooks or render rights. Separate host
+processes do not share an interpreter. Standalone Hiero is part of the planned
+family coverage, but its detection, bootstrap and native verification are not yet
+implemented by this adapter. Do not override its name to pretend it is Studio.
 
 ```bash
+dcc-mcp-cli list
+dcc-mcp-cli search --query "timeline" --dcc-type nuke
 dcc-mcp-cli call nuke_diagnostics__host_flavor --dcc-type nuke --json '{}'
 ```
 
-| Host flavor | Provides |
-|---|---|
-| `nuke` | Shared baseline: `compositing`, `node_graph`, `scripting` |
-| `nukex` | The same shared baseline |
-| `nukestudio` | Baseline plus `studio.timeline`, `studio.sequence`, `studio.project_bin`, `studio.conform`, `studio.track` |
+When several instances are running, use the selected instance through the gateway
+rather than assuming `dcc-type` uniquely identifies a process. Discovery reuses
+existing skill/tool tags and search hints; tags describe intent, **not permission**.
+The existing `metadata.dcc-mcp.host-flavors` gate prevents loading Studio-only
+skills on plain Nuke/NukeX. A search hit does not mean that its skill is loadable.
 
-Detection prefers `nuke.env`, then the executable name, and treats an
-importable `hiero` module as a supporting signal rather than a decisive one.
-Set `DCC_MCP_NUKE_HOST_FLAVOR` only to override detection for a host that
-really runs that flavor; unrecognized values are ignored.
+### Read capability evidence at four separate levels
 
-### Studio-only skills are gated, not silently unavailable
+1. **Declared host surface:** the legacy `capabilities` / `studio_capabilities`
+   fields classify expected API domains for the detected flavor. In particular,
+   `studio.conform` does not mean a conform tool is implemented.
+2. **Observed API shape:** `runtime_evidence` inspects a small, explicit set of
+   callable attributes on already loaded `nuke` / `hiero.core` modules. It does
+   not import hosts, invoke APIs or inspect every API. `not_loaded` is unknown,
+   not proof that an API is unavailable. `observed` is not proof it will execute.
+3. **Implemented adapter tool:** only shipped `tools.yaml` entries describe typed
+   operations. `nuke-studio-timeline` currently contains just read-only
+   `inspect_timeline`: project/sequence summaries, track counts and frame ranges.
+   It does not edit tracks, bins, clips or conform/export projects.
+4. **Native verification:** a real-host fixture must verify the particular
+   operation on the selected version, edition and mode. The diagnostic reports
+   `native_verification: not_performed` and `license_status: unknown`; it does not
+   certify licenses or turn a smoke test into a blanket capability claim.
 
-A bundled skill that needs the Studio surface declares it in its manifest:
+The new observations are advisory and do not widen the existing load gate.
+The timeline tool independently checks its required Hiero API when called and
+returns `studio_surface_unavailable` for a missing project-enumeration surface.
+An environment flavor override is a diagnostic aid, never a way to unlock a
+missing API or circumvent a license restriction.
 
-```yaml
-metadata:
-  dcc-mcp:
-    host-flavors: [nukestudio]
-```
-
-On a `nuke` or `nukex` session that skill stays discoverable, so an agent can
-still see the capability exists, but it will not load.
-`dcc-mcp-cli load-skill nuke-studio-timeline --dcc-type nuke` fails with an
-explicit veto naming both the required flavor and the current one, and calling
-the tool directly returns the same `capability_unavailable` error. A Studio
-skill never fails silently.
-
-`nuke-studio-timeline` is the first Studio skill. It inspects open projects,
-sequences, track counts, and frame range through the Hiero surface, read-only,
-and reports an explicit `studio_surface_unavailable` error when a Studio build
-does not expose the expected API instead of skipping it.
-
-Probe the host with `nuke_diagnostics__host_flavor` first when the entry point
-is unknown.
+See [family coverage and staged delivery](docs/family-capabilities.md) for the
+implemented inventory, missing capabilities, runtime isolation and acceptance gates.
 
 ## Automated Houdini AOV compositing
 

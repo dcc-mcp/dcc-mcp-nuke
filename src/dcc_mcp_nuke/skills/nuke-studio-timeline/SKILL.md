@@ -2,7 +2,7 @@
 name: nuke-studio-timeline
 description: >-
   Host skill - Nuke Studio only. Inspect the active timeline, sequences, and
-  project bin through the Hiero surface. Gated to the nukestudio host flavor;
+  project/sequence summaries through the Hiero surface. Gated to the nukestudio host flavor;
   not available in plain Nuke or NukeX.
 license: MIT
 compatibility: "Nuke Studio 14+; dcc-mcp-core 0.20.14+"
@@ -14,8 +14,8 @@ metadata:
     layer: domain
     stage: timeline
     host-flavors: [nukestudio]
-    search-hint: "nuke studio timeline sequence track project bin conform hiero edit"
-    tags: "nuke, nukestudio, timeline, sequence, conform, editing"
+    search-hint: "nuke studio timeline sequence track project inspection hiero read-only"
+    tags: "nuke, nukestudio, hiero, timeline, sequence, inspection, read-only"
     tools: tools.yaml
 ---
 
@@ -37,9 +37,9 @@ than failing silently.
 
 Probe the host first with `nuke_diagnostics__host_flavor` when the entry point
 is unknown. That tool reports `nuke`, `nukex`, or `nukestudio` plus the
-capability set each entry point provides.
+declared host domains and bounded runtime observations, not license approval or native verification.
 
-This is the first Studio skill. The Studio capability surface the adapter
-models is `studio.timeline`, `studio.sequence`, `studio.project_bin`,
-`studio.conform`, and `studio.track`; later skills can claim individual
-capabilities with the same `host-flavors` gate.
+This is the first Studio skill. Legacy `studio.*` labels describe expected host
+API domains, not implemented operations. No typed timeline editing, bin mutation,
+conform or export tool is supplied here. Standalone Hiero is not yet supported by
+the adapter bootstrap. Do not use flavor overrides to bypass that limitation.
