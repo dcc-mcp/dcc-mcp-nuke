@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.19.1](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.19.0...v0.19.1) (2026-10-23)
+
+
+### Bug Fixes
+
+* exclude static empty knobs from path limits ([#106](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/106)) ([e5948a9](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/e5948a911bbddf5d9a351c03342253c15ddbc4b5))
+* keep collection filesystem work off the host thread ([#107](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/107)) ([1cd7166](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/1cd7166074ab2ef9482482b1b798b5f6f9864844))
+* respect Read boundary modes in input health ([#105](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/105)) ([bb3159e](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/bb3159eccf50bf990c8fd1a429d7907f467ef20c))
+
 ## [0.19.0](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.18.0...v0.19.0) (2026-10-23)
 
 
