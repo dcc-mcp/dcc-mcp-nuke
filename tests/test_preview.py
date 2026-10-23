@@ -73,7 +73,9 @@ class Node:
         return self.host.aspect
 
     def bbox(self):
-        return [-2, -3, 1924, 1086]
+        return SimpleNamespace(
+            x=lambda: -2, y=lambda: -3, r=lambda: 1922, t=lambda: 1083, w=lambda: 1924, h=lambda: 1086
+        )
 
     def sample(self, _channel, _x, _y, _dx, _dy, frame):
         assert frame == self.host.current_frame

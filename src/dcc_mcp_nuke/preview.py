@@ -85,7 +85,8 @@ def render_node_preview(
             scale = min(1.0, max_size / max(width * aspect, height))
             output_width = max(1, min(max_size, round(width * aspect * scale)))
             output_height = max(1, min(max_size, round(height * scale)))
-            bbox = list(source.bbox())
+            bbox = source.bbox()
+            source_bbox = {"x": bbox.x(), "y": bbox.y(), "width": bbox.w(), "height": bbox.h()}
             with nuke.root():
                 statistics = sample_channel_statistics(
                     node_name=source.fullName(), channels=resolved, frame=used_frame, max_samples_per_channel=256
@@ -131,7 +132,7 @@ def render_node_preview(
             "rgb_mapping": dict(zip(("red", "green", "blue"), rgb)),
             "display_transform": {"display": display, "view": view} if display is not None else None,
             "encoding": "RGB PNG; raw numeric values clipped to [0, 1] unless display/view is supplied",
-            "source_bbox": dict(zip(("x", "y", "width", "height"), bbox)),
+            "source_bbox": source_bbox,
             "sampling": statistics["context"]["sampling"],
             "statistics": statistics["context"]["statistics"],
             "preview_id": preview_id,
