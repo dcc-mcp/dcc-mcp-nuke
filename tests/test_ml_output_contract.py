@@ -69,3 +69,76 @@ def test_serialized_ml_skill_wrapper_matches_declared_success_and_error_envelope
         assert result["context"] == {"node": "Fixture"}
         result["error"] = None
         assert not validator.is_valid(result)
+
+
+def pending_receipt(transport):
+    # Core's REST PendingCall is minimal; direct MCP build_pending_envelope
+    # adds explicit ownership, polling and transport metadata.
+    result = {"job_id": "fixture-job", "status": "pending"}
+    if transport == "mcp":
+        result.update(
+            core_job_id="fixture-job",
+            job_id_owner="core",
+            parent_job_id=None,
+            core_poll={
+                "owner": "core",
+                "tool": "jobs_get_status",
+                "arguments": {"job_id": "fixture-job", "include_result": True},
+            },
+            _meta={
+                "status": "pending",
+                "dcc": {
+                    "jobId": "fixture-job",
+                    "coreJobId": "fixture-job",
+                    "jobOwner": "core",
+                    "pollTool": "jobs_get_status",
+                    "parentJobId": None,
+                },
+            },
+        )
+    return result
+
+
+def output_validator(tool_name):
+    tools = yaml.safe_load((SKILL / "tools.yaml").read_text())["tools"]
+    schema = next(tool["output_schema"] for tool in tools if tool["name"] == tool_name)
+    return Draft202012Validator(schema)
+
+
+@pytest.mark.parametrize("tool_name", ["train_ml_node", "convert_torchscript_model"])
+@pytest.mark.parametrize("transport", ["mcp", "rest"])
+def test_async_ml_schema_accepts_core_initial_pending_receipts(tool_name, transport):
+    validator = output_validator(tool_name)
+    receipt = pending_receipt(transport)
+    validator.validate(json.loads(json.dumps(receipt)))
+    receipt["parent_job_id"] = "parent-job"
+    receipt["runtime_metadata_extension"] = {"compatible": True}
+    validator.validate(receipt)
+    for field in ("job_id", "status"):
+        incomplete = {key: value for key, value in receipt.items() if key != field}
+        assert not validator.is_valid(incomplete)
+
+
+@pytest.mark.parametrize("tool_name", ["train_ml_node", "convert_torchscript_model"])
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"job_id": ""},
+        {"job_id": 42},
+        {"status": None},
+        {"status": "completed"},
+        {"core_job_id": ""},
+        {"job_id_owner": "adapter"},
+        {"parent_job_id": ""},
+        {"core_poll": {"owner": "core", "tool": "jobs_get_status", "arguments": {"job_id": "fixture-job"}}},
+    ],
+)
+def test_async_ml_schema_rejects_malformed_pending_receipts(tool_name, changes):
+    receipt = pending_receipt("mcp")
+    receipt.update(changes)
+    assert not output_validator(tool_name).is_valid(receipt)
+
+
+@pytest.mark.parametrize("tool_name", ["inspect_ml_environment", "create_ml_node"])
+def test_sync_ml_schema_does_not_advertise_pending_job_receipts(tool_name):
+    assert not output_validator(tool_name).is_valid(pending_receipt("mcp"))
