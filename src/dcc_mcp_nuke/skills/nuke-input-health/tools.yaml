@@ -1,0 +1,24 @@
+tools:
+  - name: check_input_health
+    description: Read-only active-script input audit with bounded sequence gaps, Root/Read/optional Write range coverage, suspicious file sizes and plug-in class checks. Reports incomplete checks explicitly.
+    input_schema:
+      type: object
+      additionalProperties: false
+      properties:
+        include_write_ranges: {type: boolean, default: false}
+        required_node_classes:
+          type: array
+          maxItems: 256
+          items: {type: string, minLength: 1, maxLength: 128}
+        max_references: {type: integer, minimum: 1, maximum: 1024, default: 256}
+        max_issues: {type: integer, minimum: 1, maximum: 1024, default: 256}
+        max_frames: {type: integer, minimum: 1, maximum: 100000, default: 10000}
+        max_files: {type: integer, minimum: 1, maximum: 100000, default: 10000}
+        small_frame_ratio: {type: number, exclusiveMinimum: 0, exclusiveMaximum: 1, default: 0.1}
+    read_only: true
+    destructive: false
+    idempotent: true
+    execution: sync
+    affinity: main
+    timeout_hint_secs: 60
+    source_file: scripts/check_input_health.py
