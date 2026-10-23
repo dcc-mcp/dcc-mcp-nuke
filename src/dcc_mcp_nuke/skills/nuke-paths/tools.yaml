@@ -1,0 +1,97 @@
+tools:
+  - name: list_file_references
+    description: Inspect every File_Knob from Root recursively, returning bounded raw/evaluated paths, existence, expression and animation states; evaluates existing script expressions in the current output context.
+    input_schema:
+      type: object
+      additionalProperties: false
+      properties:
+        max_items: {type: integer, minimum: 1, maximum: 1024, default: 256}
+        node_classes: &classes
+          type: array
+          minItems: 1
+          maxItems: 64
+          uniqueItems: true
+          items: {type: string, minLength: 1, maxLength: 128, pattern: "^[A-Za-z_][A-Za-z0-9_]{0,127}$"}
+    read_only: true
+    destructive: false
+    idempotent: true
+    execution: sync
+    affinity: main
+    timeout_hint_secs: 30
+    source_file: scripts/list_file_references.py
+  - name: remap_path_prefixes
+    description: Preview or apply literal file-path prefix remaps at directory boundaries, optionally requiring existing destinations or filtering node classes; preserve expressions/animation and verify readback with whole-operation rollback.
+    input_schema:
+      type: object
+      required: [mappings]
+      additionalProperties: false
+      properties:
+        mappings:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items:
+            type: object
+            additionalProperties: false
+            required: [old_prefix, new_prefix]
+            properties:
+              old_prefix: {type: string, minLength: 1, maxLength: 8192}
+              new_prefix: {type: string, minLength: 1, maxLength: 8192}
+        dry_run: {type: boolean, default: true}
+        only_existing: {type: boolean, default: false}
+        node_classes: *classes
+        max_items: {type: integer, minimum: 1, maximum: 1024, default: 256}
+    read_only: false
+    destructive: false
+    idempotent: true
+    execution: sync
+    affinity: main
+    timeout_hint_secs: 30
+    source_file: scripts/remap_path_prefixes.py
+    next-tools:
+      on-success: [nuke_paths__list_file_references]
+  - name: convert_file_paths
+    description: Preview or apply absolute and script-relative path conversion inside the saved script folder, preserving other expressions and animated knobs; verify readback and roll back the whole operation on failure.
+    input_schema:
+      type: object
+      required: [mode]
+      additionalProperties: false
+      properties:
+        mode: {type: string, enum: [relative, absolute]}
+        dry_run: {type: boolean, default: true}
+        node_classes: *classes
+        max_items: {type: integer, minimum: 1, maximum: 1024, default: 256}
+    read_only: false
+    destructive: false
+    idempotent: true
+    execution: sync
+    affinity: main
+    timeout_hint_secs: 30
+    source_file: scripts/convert_file_paths.py
+    next-tools:
+      on-success: [nuke_paths__list_file_references]
+  - name: relink_missing_files
+    description: Preview or relink missing literal file/sequence paths only after exactly one basename match in a bounded recursive folder search; report ambiguous and still-missing references and verify writes with rollback.
+    input_schema:
+      type: object
+      required: [search_folders]
+      additionalProperties: false
+      properties:
+        search_folders:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items: {type: string, minLength: 1, maxLength: 8192}
+        dry_run: {type: boolean, default: true}
+        node_classes: *classes
+        max_items: {type: integer, minimum: 1, maximum: 1024, default: 256}
+        max_search_files: {type: integer, minimum: 1, maximum: 100000, default: 10000}
+    read_only: false
+    destructive: false
+    idempotent: true
+    execution: sync
+    affinity: main
+    timeout_hint_secs: 60
+    source_file: scripts/relink_missing_files.py
+    next-tools:
+      on-success: [nuke_paths__list_file_references]

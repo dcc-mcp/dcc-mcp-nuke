@@ -171,6 +171,14 @@ and a bounded enumerated colorspace list without changing the script. The
 reject unknown values instead of silently storing them, and require a matching
 readback with rollback on mismatch.
 
+The `nuke-paths` skill discovers every `File_Knob` recursively, including file
+references inside groups and gizmos, and reports raw/evaluated paths and file
+or sequence existence. Its prefix remap, absolute/script-relative conversion,
+and unique missing-file relink tools default to dry run, preserve expressions
+and animated knobs, and verify each write with whole-operation rollback on
+failure. Reference lists and folder searches are bounded; ambiguous relinks
+remain unchanged. These host-injected helpers also work in headless `nuke -t`.
+
 The `nuke-preview` skill renders one node/frame to a temporary RGB PNG with a
 bounded longest edge, file reference, source bounding box, and sampled channel
 statistics. Select an RGB layer or one exact channel for grayscale inspection;
