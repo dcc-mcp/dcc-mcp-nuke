@@ -204,6 +204,16 @@ compressed frame ranges; limit and inspection failures are explicit. Supply
 required classes from a handoff manifest to check dependencies absent from the
 active graph. Third-party license availability requires separate verification.
 
+The `nuke-collect` skill previews or packages the active script into a new
+directory or zip with bounded dependency copies, a relative-path script and a
+manifest. It supports full sequences or Nuke's used-frame dependency query,
+geometry/LUT/config file knobs, discoverable plug-in scripts and native fonts.
+Missing files, expressions, unresolved OCIO LUTs/imports, and compiled runtime
+requirements are reported explicitly. Live knob serialization, Root state and
+the original disk script are preserved; the async copy checks cancellation and
+never overwrites an existing target. `inspect_package` verifies the receipt and
+stored file sizes before handoff.
+
 Releases use a canonical tag and exact-main identity check, one digest-bound
 wheel/sdist bundle, and a minimal-OIDC publisher in `release.yaml` and the
 GitHub `pypi` environment. Immediately before publishing, the workflow force-refreshes
