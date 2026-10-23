@@ -119,7 +119,7 @@ def package_script(
             # Nuke derives this read-only value even when enabled()/READ_ONLY report it writable.
             unrewritten.append(dict(identity, reason="host_managed_ocio_config"))
             continue
-        multiple_contexts = _full_serialization(knob) != knob.toScript()
+        multiple_contexts = _serialization(knob, None) != _serialization(knob, nuke.OutputContext())
         if record["class"] in _OUTPUT_CLASSES:
             if multiple_contexts or record["expression"] or record["animated"] or record["error"]:
                 unrewritten.append(
@@ -286,7 +286,12 @@ def _save_snapshot(nuke, path, rewrites):
     modified = root.modified()
     if not isinstance(modified, bool) or not callable(getattr(root, "setModified", None)):
         raise FileReferenceRuntimeError("Root modified state cannot be restored")
-    snapshots = [(knob, _full_serialization(knob), value, serialized) for knob, value, serialized in rewrites]
+    snapshots = []
+    for knob, value, serialized in rewrites:
+        before = _serialization(knob, None)
+        if before != _serialization(knob, nuke.OutputContext()):
+            raise FileReferenceRuntimeError("multiple-context knobs cannot be temporarily rewritten")
+        snapshots.append((knob, before, value, serialized))
     touched = []
     failure = None
     nuke.Undo.disable()
@@ -310,7 +315,7 @@ def _save_snapshot(nuke, path, rewrites):
         for knob, before in reversed(touched):
             try:
                 knob.fromScript(before)
-                if _full_serialization(knob) != before:
+                if _serialization(knob, None) != before:
                     failure = "original knob rollback could not be verified"
             except Exception:
                 failure = "original knob rollback could not be verified"
@@ -344,8 +349,8 @@ def _used_files(nodes, first, last):
         raise FileReferenceRuntimeError("Nuke used-frame dependency query failed") from None
 
 
-def _full_serialization(knob):
-    serialized = knob.toScript(False, None)
+def _serialization(knob, context):
+    serialized = knob.toScript(False, context)
     if not isinstance(serialized, str) or len(serialized) > 1000000:
         raise FileReferenceRuntimeError("knob full-context serialization is not a bounded string")
     return serialized
@@ -401,7 +406,7 @@ def _font_dependencies(nuke, nodes, add_file, rewrites, missing, unrewritten, pl
             if knob_name != "font" or knob.Class() not in ("FreeType_Knob", "Font_Knob"):
                 continue
             identity = {"node": name, "class": str(node.Class()), "knob": knob_name}
-            serialized = knob.toScript()
+            serialized = _serialization(knob, nuke.OutputContext())
             match = _FONT.fullmatch(serialized) if isinstance(serialized, str) and len(serialized) <= 8192 else None
             if not match or knob.isAnimated() is not False or knob.hasExpression() is not False:
                 unrewritten.append(dict(identity, reason="unsupported_font_serialization"))
@@ -412,7 +417,7 @@ def _font_dependencies(nuke, nodes, add_file, rewrites, missing, unrewritten, pl
                 continue
             relative = add_file(source, "font")
             plugin_directories.append(posixpath.dirname(relative))
-            if _full_serialization(knob) != serialized:
+            if _serialization(knob, None) != serialized:
                 unrewritten.append(dict(identity, reason="multiple_context_font"))
                 continue
             # FreeType filenames use the font/plugin search path rather than File_Knob Tcl evaluation.

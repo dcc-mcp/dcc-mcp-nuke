@@ -47,7 +47,7 @@ class Knob:
     def getKeyList(self):
         return [1.0] if self.animated else []
 
-    def toScript(self, _quote=False, _context="current"):
+    def toScript(self, _quote=False, _context=None):
         return self.raw
 
     def setValue(self, value):
@@ -147,6 +147,9 @@ class Nuke:
 
     def pluginPath(self):
         return self._plugin_folders
+
+    def OutputContext(self):
+        return object()
 
     def scriptSaveToTemp(self, path):
         self.saves.append(path)
@@ -316,7 +319,7 @@ class MultiContextKnob(Knob):
         super().__init__(left)
         self.views = {"left": left, "right": right}
 
-    def toScript(self, quote=False, context="current"):
+    def toScript(self, quote=False, context=None):
         return json.dumps(self.views, sort_keys=True) if context is None else self.raw
 
     def setValue(self, value):
@@ -324,8 +327,8 @@ class MultiContextKnob(Knob):
         self.views = {"left": value}
 
     def fromScript(self, value):
-        self.views = json.loads(value)
-        self.raw = self.views["left"]
+        self.raw = value
+        self.views["left"] = value
 
 
 def test_multiple_context_paths_are_reported_without_rewriting_other_views(tmp_path):
@@ -342,16 +345,22 @@ def test_multiple_context_paths_are_reported_without_rewriting_other_views(tmp_p
     assert not knob.writes
 
 
-def test_snapshot_restores_full_serialization_even_if_a_setter_discards_another_view(tmp_path):
+def test_snapshot_refuses_multiple_contexts_before_a_literal_restore_could_corrupt_a_view(tmp_path):
     from dcc_mcp_nuke.script_package import _save_snapshot
 
     knob = MultiContextKnob("left.exr", "right.exr")
     nuke = _nuke(tmp_path)
     nuke.nodes = [Node("StereoRead", {"file": knob})]
     before = knob.toScript(False, None)
-    _save_snapshot(nuke, tmp_path / "copied.nk", [(knob, RELATIVE + "assets/left.exr", False)])
+    assert knob.toScript() == before
+    assert knob.toScript(False, nuke.OutputContext()) != before
+    with pytest.raises(FileReferenceRuntimeError, match="multiple-context"):
+        _save_snapshot(nuke, tmp_path / "copied.nk", [(knob, RELATIVE + "assets/left.exr", False)])
     assert knob.toScript(False, None) == before
     assert knob.views["right"] == "right.exr"
+    assert not knob.writes
+    assert not nuke.saves
+    assert nuke.Undo.depth == 0
     assert nuke.root().modified() is True
 
 

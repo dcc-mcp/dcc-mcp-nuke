@@ -71,6 +71,8 @@ not certify full portability.
 File/font knobs whose all-view/time serialization differs from the current
 context are reported as `multiple_context_path` or `multiple_context_font` and
 are left intact, so a single-view rewrite cannot drop another view's paths.
+The comparison uses an explicit `nuke.OutputContext()` because Nuke versions
+can return all views from the no-argument `toScript()` call.
 
 All copies are staged before publication. ZIP publication is an exclusive
 atomic link; directory publication reserves a new target and moves staged
@@ -80,8 +82,9 @@ never overwritten. `inspect_package` verifies the receipt, safe relative names,
 script presence and each dependency's stored byte size; it does not execute
 scripts or certify media contents.
 
-The live graph's rewritten knobs are restored from their exact original
-all-view/time serialization (`toScript(False, None)`) in `finally`, along with Root name and modified state; undo
+Only knobs whose all-view and explicit current-context serializations agree
+can enter the temporary rewrite transaction. They are restored from their exact
+original serialization in `finally`, along with Root name and modified state; undo
 recording is suppressed during this temporary transaction. The copied script
 is serialized with Nuke's `scriptSaveToTemp`, which leaves the original disk
 script untouched. A mismatch or failed rollback fails the job before publication.
