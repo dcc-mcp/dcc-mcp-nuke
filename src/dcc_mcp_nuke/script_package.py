@@ -119,9 +119,12 @@ def package_script(
             # Nuke derives this read-only value even when enabled()/READ_ONLY report it writable.
             unrewritten.append(dict(identity, reason="host_managed_ocio_config"))
             continue
+        multiple_contexts = _full_serialization(knob) != knob.toScript()
         if record["class"] in _OUTPUT_CLASSES:
-            if record["expression"] or record["animated"] or record["error"]:
-                unrewritten.append(dict(identity, reason="dynamic_output"))
+            if multiple_contexts or record["expression"] or record["animated"] or record["error"]:
+                unrewritten.append(
+                    dict(identity, reason="multiple_context_path" if multiple_contexts else "dynamic_output")
+                )
                 continue
             relative = f"renders/{_safe_name(record['node'])}/{posixpath.basename(raw.replace(chr(92), '/'))}"
             outputs.append(posixpath.dirname(relative))
@@ -152,7 +155,9 @@ def package_script(
             relative = posixpath.join(posixpath.dirname(copied), Path(source_path).name)
         if Path(source_path).suffix.lower() == ".ocio":
             unrewritten.append(dict(identity, reason="ocio_dependent_luts_not_resolved"))
-        if record["expression"] or record["animated"]:
+        if multiple_contexts:
+            unrewritten.append(dict(identity, reason="multiple_context_path"))
+        elif record["expression"] or record["animated"]:
             unrewritten.append(dict(identity, reason="expression" if record["expression"] else "animated"))
         else:
             rewrites.append((knob, _RELATIVE + relative, False))
@@ -281,7 +286,7 @@ def _save_snapshot(nuke, path, rewrites):
     modified = root.modified()
     if not isinstance(modified, bool) or not callable(getattr(root, "setModified", None)):
         raise FileReferenceRuntimeError("Root modified state cannot be restored")
-    snapshots = [(knob, knob.toScript(), value, serialized) for knob, value, serialized in rewrites]
+    snapshots = [(knob, _full_serialization(knob), value, serialized) for knob, value, serialized in rewrites]
     touched = []
     failure = None
     nuke.Undo.disable()
@@ -305,7 +310,7 @@ def _save_snapshot(nuke, path, rewrites):
         for knob, before in reversed(touched):
             try:
                 knob.fromScript(before)
-                if knob.toScript() != before:
+                if _full_serialization(knob) != before:
                     failure = "original knob rollback could not be verified"
             except Exception:
                 failure = "original knob rollback could not be verified"
@@ -337,6 +342,13 @@ def _used_files(nodes, first, last):
         return used
     except Exception:
         raise FileReferenceRuntimeError("Nuke used-frame dependency query failed") from None
+
+
+def _full_serialization(knob):
+    serialized = knob.toScript(False, None)
+    if not isinstance(serialized, str) or len(serialized) > 1000000:
+        raise FileReferenceRuntimeError("knob full-context serialization is not a bounded string")
+    return serialized
 
 
 def _plugin_dependencies(nuke, nodes, add_file, max_files):
@@ -400,6 +412,9 @@ def _font_dependencies(nuke, nodes, add_file, rewrites, missing, unrewritten, pl
                 continue
             relative = add_file(source, "font")
             plugin_directories.append(posixpath.dirname(relative))
+            if _full_serialization(knob) != serialized:
+                unrewritten.append(dict(identity, reason="multiple_context_font"))
+                continue
             # FreeType filenames use the font/plugin search path rather than File_Knob Tcl evaluation.
             rewritten = match.group(1) + source.name + match.group(3)
             if rewritten != serialized:

@@ -68,6 +68,9 @@ Expression-bearing and animated references remain unchanged and are reported,
 even when an evaluated source file can be included. A package with missing or
 unrewritten references needs manual resolution before handoff; collection does
 not certify full portability.
+File/font knobs whose all-view/time serialization differs from the current
+context are reported as `multiple_context_path` or `multiple_context_font` and
+are left intact, so a single-view rewrite cannot drop another view's paths.
 
 All copies are staged before publication. ZIP publication is an exclusive
 atomic link; directory publication reserves a new target and moves staged
@@ -78,7 +81,7 @@ script presence and each dependency's stored byte size; it does not execute
 scripts or certify media contents.
 
 The live graph's rewritten knobs are restored from their exact original
-serialization in `finally`, along with Root name and modified state; undo
+all-view/time serialization (`toScript(False, None)`) in `finally`, along with Root name and modified state; undo
 recording is suppressed during this temporary transaction. The copied script
 is serialized with Nuke's `scriptSaveToTemp`, which leaves the original disk
 script untouched. A mismatch or failed rollback fails the job before publication.
