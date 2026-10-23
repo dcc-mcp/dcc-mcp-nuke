@@ -9,7 +9,7 @@ from pathlib import Path
 from statistics import median
 from typing import Any
 
-from dcc_mcp_nuke.file_references import list_file_references, sequence_files, sequence_pattern
+from dcc_mcp_nuke.file_references import list_file_references, reference_path, sequence_files, sequence_pattern
 
 _OUTPUT_CLASSES = {"Write", "DeepWrite", "WriteGeo"}
 
@@ -48,17 +48,20 @@ def check_input_health(
         not isinstance(requested, list)
         or len(requested) > 256
         or any(
-            not isinstance(name, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", name) for name in requested
+            not isinstance(name, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.:-]{0,127}", name)
+            for name in requested
         )
     ):
         raise ValueError("required_node_classes must be a bounded list of literal class names")
 
     issues = {"error": [], "warning": [], "info": []}
+    issue_counts = dict.fromkeys(issues, 0)
     issue_count = 0
 
     def report(severity, code, node=None, **details):
         nonlocal issue_count
         issue_count += 1
+        issue_counts[severity] += 1
         if sum(len(group) for group in issues.values()) < max_issues:
             issues[severity].append({"code": code, "node": node, **details})
 
@@ -150,7 +153,7 @@ def check_input_health(
     inventory_available = True
     try:
         inventory = nuke.plugins(nuke.ALL | nuke.REGISTERED)
-        available = {Path(str(plugin).replace("\\", "/")).stem for plugin in inventory}
+        available = {name for plugin in inventory for name in (str(plugin), Path(str(plugin).replace("\\", "/")).stem)}
     except Exception:
         inventory_available = False
         available = set()
@@ -168,6 +171,7 @@ def check_input_health(
     return {
         "issues": issues,
         "issue_count": issue_count,
+        "issue_counts": issue_counts,
         "truncated": issue_count > max_issues or references["truncated"],
         "checked_references": checked,
         "reference_count": references["reference_count"],
@@ -201,13 +205,11 @@ def _range(node, first, last):
 
 def _sequence_path(reference):
     raw = reference["raw_value"].replace("\\", "/")
-    evaluated = reference["evaluated_path"].replace("\\", "/")
     basename = raw.rsplit("/", 1)[-1]
     if "frame" in sequence_pattern(basename).groupindex:
         if any(character in basename for character in "[]$"):
             raise ValueError("dynamic sequence basename cannot be inspected exhaustively")
-        return evaluated.rsplit("/", 1)[0] + "/" + basename if "/" in evaluated else basename
-    return evaluated
+    return reference_path(reference)
 
 
 def _ranges(frames):

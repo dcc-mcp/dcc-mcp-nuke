@@ -60,7 +60,7 @@ class Nuke:
 
     def plugins(self, flags):
         assert flags == 3
-        return ["/plugins/Blur.dll", "RegisteredBundleOp"]
+        return ["/plugins/Blur.dll", "RegisteredBundleOp", "OFX.com.vendor.effect"]
 
 
 def _codes(result, severity):
@@ -110,7 +110,8 @@ def test_sequence_preserves_token_when_evaluate_expands_current_frame(tmp_path):
 
 def test_unknown_nodes_and_required_plugins_are_checked_without_creating_nodes():
     result = check_input_health(
-        Nuke([Node("Unresolved", "Unknown")]), required_node_classes=["Blur", "RegisteredBundleOp", "AbsentOFX"]
+        Nuke([Node("Unresolved", "Unknown")]),
+        required_node_classes=["Blur", "RegisteredBundleOp", "OFX.com.vendor.effect", "AbsentOFX"],
     )
     errors = _codes(result, "error")
     assert errors["unknown_node_class"]["node"] == "Unresolved"
