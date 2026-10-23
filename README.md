@@ -171,6 +171,14 @@ and a bounded enumerated colorspace list without changing the script. The
 reject unknown values instead of silently storing them, and require a matching
 readback with rollback on mismatch.
 
+The `nuke-paths` skill discovers every `File_Knob` recursively, including file
+references inside groups and gizmos, and reports raw/evaluated paths and file
+or sequence existence. Its prefix remap, absolute/script-relative conversion,
+and unique missing-file relink tools default to dry run, preserve expressions
+and animated knobs, and verify each write with whole-operation rollback on
+failure. Reference lists and folder searches are bounded; ambiguous relinks
+remain unchanged. These host-injected helpers also work in headless `nuke -t`.
+
 Releases use a canonical tag and exact-main identity check, one digest-bound
 wheel/sdist bundle, and a minimal-OIDC publisher in `release.yaml` and the
 GitHub `pypi` environment. Immediately before publishing, the workflow force-refreshes
