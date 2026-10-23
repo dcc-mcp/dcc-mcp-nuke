@@ -12,6 +12,7 @@ from typing import Any
 from dcc_mcp_nuke.file_references import list_file_references, reference_path, sequence_files, sequence_pattern
 
 _OUTPUT_CLASSES = {"Write", "DeepWrite", "WriteGeo"}
+_PLUGIN_EXTENSIONS = {".dll", ".so", ".dylib", ".gizmo", ".py", ".tcl", ".ofx"}
 
 
 def check_input_health(
@@ -72,14 +73,25 @@ def check_input_health(
     nodes = list(nuke.allNodes(group=root, recurseGroups=True))
     by_name = {node.fullName(): node for node in nodes}
     write_ranges = []
+    write_range_count = 0
     if include_write_ranges:
         for node in nodes:
             if node.Class() in _OUTPUT_CLASSES and _knob(node, "use_limit", False):
                 bounds = _range(node, "first", "last")
                 if bounds is not None:
-                    write_ranges.append(bounds)
+                    write_range_count += 1
+                    if len(write_ranges) < max_references:
+                        write_ranges.append(bounds)
                 else:
                     report("warning", "invalid_write_range", node.fullName())
+    write_ranges_truncated = write_range_count > len(write_ranges)
+    if write_ranges_truncated:
+        report(
+            "warning",
+            "write_range_limit_exceeded",
+            write_range_count=write_range_count,
+            max_write_ranges=max_references,
+        )
     references = list_file_references(nuke, max_items=max_references)
     checked = 0
     for reference in references["references"]:
@@ -99,9 +111,23 @@ def check_input_health(
             report(
                 "warning", "range_mismatch", name, node_range=list(node_range), root_range=list(root_range), **detail
             )
+        if node_range:
+            mismatched = [bounds for bounds in write_ranges if bounds[0] < node_range[0] or bounds[1] > node_range[1]]
+            if mismatched:
+                report(
+                    "warning",
+                    "write_range_mismatch",
+                    name,
+                    node_range=list(node_range),
+                    write_range=[min(bounds[0] for bounds in mismatched), max(bounds[1] for bounds in mismatched)],
+                    mismatched_write_range_count=len(mismatched),
+                    **detail,
+                )
         expected_ranges = [root_range, *write_ranges]
         if node_range:
             expected_ranges.append(node_range)
+        if reference["animated"]:
+            report("warning", "animated_path_current_frame_only", name, **detail)
         try:
             path = _sequence_path(reference)
             files = sequence_files(path, max_files=max_files)
@@ -114,13 +140,9 @@ def check_input_health(
                     report("warning", "zero_byte", name, path=path, **detail)
                 continue
             if reference["animated"]:
-                report("warning", "animated_path_current_frame_only", name, **detail)
                 continue
-            if any(last - first + 1 > max_frames for first, last in expected_ranges):
-                report("warning", "frame_limit_exceeded", name, max_frames=max_frames, **detail)
-                continue
-            expected = {frame for first, last in expected_ranges for frame in range(first, last + 1)}
-            if len(expected) > max_frames:
+            expected = _expected_frames(expected_ranges, max_frames)
+            if expected is None:
                 report("warning", "frame_limit_exceeded", name, max_frames=max_frames, **detail)
                 continue
             sizes = {int(pattern.fullmatch(Path(file).name)["frame"]): os.path.getsize(file) for file in files}
@@ -153,7 +175,13 @@ def check_input_health(
     inventory_available = True
     try:
         inventory = nuke.plugins(nuke.ALL | nuke.REGISTERED)
-        available = {name for plugin in inventory for name in (str(plugin), Path(str(plugin).replace("\\", "/")).stem)}
+        available = set()
+        for plugin in inventory:
+            name = str(plugin)
+            available.add(name)
+            path = Path(name.replace("\\", "/"))
+            if path.suffix.lower() in _PLUGIN_EXTENSIONS:
+                available.add(path.stem)
     except Exception:
         inventory_available = False
         available = set()
@@ -172,11 +200,13 @@ def check_input_health(
         "issues": issues,
         "issue_count": issue_count,
         "issue_counts": issue_counts,
-        "truncated": issue_count > max_issues or references["truncated"],
+        "truncated": issue_count > max_issues or references["truncated"] or write_ranges_truncated,
         "checked_references": checked,
         "reference_count": references["reference_count"],
         "root_range": list(root_range),
         "write_ranges": [list(bounds) for bounds in write_ranges],
+        "write_range_count": write_range_count,
+        "write_ranges_truncated": write_ranges_truncated,
         "plugin_inventory_available": inventory_available,
         "node_classes": sorted(present_classes)[:max_references],
         "node_classes_truncated": len(present_classes) > max_references,
@@ -210,6 +240,20 @@ def _sequence_path(reference):
         if any(character in basename for character in "[]$"):
             raise ValueError("dynamic sequence basename cannot be inspected exhaustively")
     return reference_path(reference)
+
+
+def _expected_frames(ranges, limit):
+    expected = set()
+    previous_last = None
+    for first, last in sorted(ranges):
+        first = first if previous_last is None else max(first, previous_last + 1)
+        if first > last:
+            continue
+        if len(expected) + last - first + 1 > limit:
+            return None
+        expected.update(range(first, last + 1))
+        previous_last = last
+    return expected
 
 
 def _ranges(frames):

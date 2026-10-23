@@ -23,6 +23,10 @@ are grouped by severity and frame lists are compressed into inclusive ranges.
 Sequence checks cover the union of Root and Read ranges, plus limited Write
 ranges when requested. Hold/loop/offset and time remapping are not simulated;
 range warnings indicate coverage, not a prediction of rendered pixels.
+Read coverage is compared separately with Root and requested Write ranges.
+`max_references` also caps the returned limited Write ranges; total counts and
+an incomplete-check warning identify omissions. Frame unions are bounded before
+their frame sets are allocated.
 
 Provide `required_node_classes` from a handoff manifest to check classes that
 could not be instantiated on this machine. Existing nodes prove their classes

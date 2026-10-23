@@ -172,3 +172,70 @@ def test_frame_list_compression_is_bounded(tmp_path):
     assert gap["frame_count"] == 75
     assert len(gap["frame_ranges"]) == 64
     assert gap["ranges_truncated"] is True
+
+
+def test_write_range_warning_does_not_depend_on_missing_disk_frames(tmp_path):
+    for frame in range(1, 11):
+        (tmp_path / f"image.{frame:04d}.exr").write_bytes(b"image")
+    read = Node("Read", file=str(tmp_path / "image.%04d.exr"), first=1, last=5)
+    write = Node("Write", "Write", use_limit=True, first=1, last=10)
+    result = check_input_health(Nuke([read, write]), include_write_ranges=True)
+    warning = _codes(result, "warning")["write_range_mismatch"]
+    assert warning["node_range"] == [1, 5]
+    assert warning["write_range"] == [1, 10]
+    assert warning["mismatched_write_range_count"] == 1
+    assert not result["issues"]["error"]
+    assert "range_mismatch" not in _codes(result, "warning")
+
+
+def test_write_ranges_are_capped_counted_and_marked_incomplete():
+    writes = [Node(f"Write{index}", "Write", use_limit=True, first=index, last=index) for index in range(10)]
+    result = check_input_health(Nuke(writes), include_write_ranges=True, max_references=2)
+    assert result["write_range_count"] == 10
+    assert len(result["write_ranges"]) == 2
+    assert result["write_ranges_truncated"] is True and result["truncated"] is True
+    warning = _codes(result, "warning")["write_range_limit_exceeded"]
+    assert warning["write_range_count"] == 10 and warning["max_write_ranges"] == 2
+
+
+def test_frame_union_limit_catches_disjoint_ranges_before_allocating_them(monkeypatch):
+    import dcc_mcp_nuke.input_health as health
+
+    visited = []
+
+    def bounded_range(first, last):
+        assert last - first <= 3
+        visited.append((first, last))
+        return range(first, last)
+
+    monkeypatch.setattr(health, "range", bounded_range, raising=False)
+    assert health._expected_frames([(1, 3), (10, 12)], 3) is None
+    assert visited == [(1, 4)]
+    visited.clear()
+    assert health._expected_frames([(0, 2**60)], 3) is None
+    assert visited == []
+
+
+def test_overlapping_frame_union_counts_each_frame_once():
+    from dcc_mcp_nuke.input_health import _expected_frames
+
+    assert _expected_frames([(-2, 1), (-1, 0), (1, 2)], 5) == {-2, -1, 0, 1, 2}
+
+
+def test_registered_dotted_class_does_not_prove_its_parent_prefix_available():
+    result = check_input_health(Nuke([]), required_node_classes=["OFX.com.vendor.effect", "OFX.com.vendor", "Blur"])
+    assert result["required_classes_not_found"] == ["OFX.com.vendor"]
+    assert _codes(result, "error")["missing_plugin"]["node_class"] == "OFX.com.vendor"
+
+
+def test_animated_concrete_path_reports_current_frame_only(tmp_path):
+    image = tmp_path / "image.exr"
+    image.write_bytes(b"image")
+    node = Node("AnimatedRead", file=str(image))
+    knob = node.knobs()["file"]
+    knob.isAnimated = lambda: True
+    knob.getNumKeys = lambda: 1
+    knob.getKeyList = lambda: [1]
+    result = check_input_health(Nuke([node]))
+    assert _codes(result, "warning")["animated_path_current_frame_only"]["node"] == "AnimatedRead"
+    assert not result["issues"]["error"]
