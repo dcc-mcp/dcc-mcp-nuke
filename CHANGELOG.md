@@ -2,6 +2,23 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.17.0](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.16.3...v0.17.0) (2026-10-23)
+
+
+### Features
+
+* add transactional file path management ([#89](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/89)) ([ad4408f](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/ad4408f4ada3f96c916590eb02fa56ed4a2dbf73))
+* audit Nuke input health ([#93](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/93)) ([80b0e4b](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/80b0e4bb16fb5786e6b6714d9ebd127d525a0cfb))
+* collect scripts with bounded dependency packages ([#92](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/92)) ([405417f](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/405417fd528ee94bf8b3b3a0ebf30145fa41eb1b))
+* render bounded node previews ([#90](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/90)) ([cbac5b0](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/cbac5b0c6662ba1ea594ca49c9f502ff77295e45))
+
+
+### Bug Fixes
+
+* **color:** resolve OCIO config on Nuke 17 and strip enum menu labels ([c95e1a2](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/c95e1a29434b9b18b8cbc14e0b89a6334d967140))
+* preserve existing graphs in layered composites ([#91](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/91)) ([f69f767](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/f69f767dc7ec5575af2046b5f44f72503381b1bf))
+* reject autosave recovery before opening scripts ([#88](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/88)) ([b302c63](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/b302c6374aa1fd8f23b1354c3e5b0c1f12246d66))
+
 ## [0.16.3](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.16.2...v0.16.3) (2026-10-21)
 
 
