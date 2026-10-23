@@ -26,8 +26,10 @@ time, connect exact input indices, and read back changed knobs. The surface
 never clears the graph and rejects executable or sensitive knob classes.
 
 Use `auto_layout_nodes` with 1–256 exact `full_name` values from the graph
-listing. The tool calls native `Node.autoplace()` in the supplied order and
-returns each requested node's previous and final x/y coordinates. All targets
+listing. The tool reads actual node screen dimensions, then calls native
+`Node.autoplace()` in deterministic upstream-to-downstream connection order.
+It returns the placement order and each requested node's previous and final
+x/y coordinates and screen dimensions. All targets
 must share one parent Group. Group nodes are moved as single nodes; their
 contents are not laid out recursively. Backdrop targets, locked nodes or
 ancestor Groups, ambiguous identities, and unsupported native state fail
@@ -35,12 +37,17 @@ before mutation. The guarded graph is limited to 1000 nodes and 64 connected
 input slots per node; names and coordinates use the existing bounded graph
 contract.
 
-Only requested positions may change. Connections, graph membership, selection,
-and unrequested positions are verified afterward; failed native calls or
+Only requested positions may change. Final screen rectangles must not overlap
+other requested nodes or unrequested nodes in the same Group; Backdrops are
+containers and are excluded from this collision check. Connections, graph
+membership, selection, and unrequested positions are verified afterward; failed native calls or
 readbacks restore original positions, links, selection, and script dirty state.
 A rollback failure is reported explicitly and leaves the script marked dirty.
 The current Group context is preserved. Native autoplace avoids overlaps; its
-exact arrangement can vary by host version and is not promised to be idempotent.
+exact arrangement can vary by host version. Repeated calls can translate the
+arrangement and are not promised to be idempotent; every result must still pass
+the collision checks. Cyclic target connections and unobservable screen dimensions
+fail before mutation.
 It does not resize or fit Backdrops, save, render, or change node settings.
 
 Save the script explicitly only after the graph assertions pass.

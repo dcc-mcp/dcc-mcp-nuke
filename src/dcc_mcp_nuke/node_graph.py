@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Mapping, Sequence
+from graphlib import CycleError, TopologicalSorter
 from typing import Any
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$")
@@ -140,30 +141,43 @@ def auto_layout_nodes(nuke: Any, node_names: list[str]) -> dict[str, Any]:
             ancestor = _layout_parent(ancestor)
         else:
             raise ValueError("auto-layout Group nesting exceeds the supported limit")
+        placement_order = _layout_order(before, node_names)
+        rectangle_nodes = {
+            name: state["node"]
+            for name, state in before.items()
+            if state["class"] != "BackdropNode" and _layout_parent(state["node"]) == parent
+        }
+        # Nuke's first placement can otherwise use a stale default node height.
+        # Read every target's real screen dimensions before placing any node.
+        _layout_rectangles(rectangle_nodes)
         modified = root.modified()
         if type(modified) is not bool or not callable(getattr(root, "setModified", None)):
             raise NodeGraphMutationError("script modified state could not be verified")
 
         try:
             with parent:
-                for node in targets:
-                    node.autoplace()
+                for name in placement_order:
+                    before[name]["node"].autoplace()
             _restore_layout_selection(before)
             after = _layout_snapshot(nuke)
             _verify_layout_preservation(before, after, set(node_names))
+            rectangles = _layout_rectangles(rectangle_nodes)
+            _verify_layout_rectangles(rectangles, set(node_names))
             changed_count = sum(before[name]["position"] != after[name]["position"] for name in node_names)
             root.setModified(modified or bool(changed_count))
             if root.modified() is not (modified or bool(changed_count)):
                 raise NodeGraphMutationError("script modified state readback failed")
-        except Exception:
+        except Exception as exc:
             _rollback_layout(nuke, before, modified)
-            raise NodeGraphMutationError("native auto-layout failed; original graph layout restored") from None
+            reason = str(exc) if isinstance(exc, NodeGraphMutationError) else "native auto-layout failed"
+            raise NodeGraphMutationError(reason + "; original graph layout restored") from None
 
         return {
             "algorithm": "nuke_native_autoplace",
             "parent": "root" if parent == root else _node_identity(parent),
             "node_count": len(targets),
             "changed_count": changed_count,
+            "placement_order": placement_order,
             "nodes": [
                 {
                     "name": node.name(),
@@ -171,6 +185,8 @@ def auto_layout_nodes(nuke: Any, node_names: list[str]) -> dict[str, Any]:
                     "before": {"x": before[name]["position"][0], "y": before[name]["position"][1]},
                     "x": after[name]["position"][0],
                     "y": after[name]["position"][1],
+                    "width": rectangles[name][2],
+                    "height": rectangles[name][3],
                 }
                 for name, node in zip(node_names, targets)
             ],
@@ -364,6 +380,53 @@ def _layout_parent(node: Any) -> Any:
     if not callable(reader) or (parent := reader()) is None:
         raise NodeGraphMutationError("node parent Group could not be verified")
     return parent
+
+
+def _layout_order(snapshot: dict[str, Any], node_names: list[str]) -> list[str]:
+    names = set(node_names)
+    dependencies = {
+        name: sorted(
+            {
+                _node_identity(source)
+                for source in snapshot[name]["inputs"]
+                if source is not None and _node_identity(source) in names
+            }
+        )
+        for name in sorted(names)
+    }
+    try:
+        return list(TopologicalSorter(dependencies).static_order())
+    except CycleError:
+        raise ValueError("auto-layout target connections contain a cycle") from None
+
+
+def _layout_rectangles(nodes: dict[str, Any]) -> dict[str, tuple[int, int, int, int]]:
+    rectangles = {}
+    for name, node in nodes.items():
+        readers = (getattr(node, "screenWidth", None), getattr(node, "screenHeight", None))
+        if not all(callable(reader) for reader in readers):
+            raise NodeGraphMutationError("native node screen dimensions are unavailable")
+        width, height = (reader() for reader in readers)
+        _bounded_int("auto-layout node screen width", width, 1, 10000)
+        _bounded_int("auto-layout node screen height", height, 1, 10000)
+        x, y = _layout_position(node)
+        rectangles[name] = (x, y, width, height)
+    return rectangles
+
+
+def _verify_layout_rectangles(rectangles: dict[str, tuple[int, int, int, int]], targets: set[str]) -> None:
+    items = list(rectangles.items())
+    for index, (name, (x, y, width, height)) in enumerate(items):
+        for other_name, (other_x, other_y, other_width, other_height) in items[index + 1 :]:
+            if name not in targets and other_name not in targets:
+                continue
+            if (
+                x < other_x + other_width
+                and other_x < x + width
+                and y < other_y + other_height
+                and other_y < y + height
+            ):
+                raise NodeGraphMutationError("native auto-layout left overlapping node rectangles")
 
 
 def _restore_layout_selection(snapshot: dict[str, Any]) -> None:
