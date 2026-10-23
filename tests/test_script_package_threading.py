@@ -168,3 +168,39 @@ def test_used_mode_rejects_paths_that_do_not_prove_this_sequence(tmp_path, depen
     with pytest.raises(FileReferenceRuntimeError) as error:
         script_package.package_script(nuke, str(tmp_path / "package"), frame_mode="used")
     assert error.value.context["reason"] == "dependency_path_mismatch"
+
+
+def test_native_cumulative_dependency_rows_count_unique_files_and_do_not_repeat_paths(tmp_path):
+    from dcc_mcp_nuke.script_package_scene import _used_files
+
+    frame = str(tmp_path / "plate.0101.exr")
+    read = Node("Read1", {}, "Read")
+    first = Node("Write1", {}, "Write", dependencies=[(read, [frame]), (read, [frame, frame])])
+    second = Node("Write2", {}, "Write", dependencies=[(read, [frame, frame])])
+
+    used, error = _used_files({"Read1": read, "Write1": first, "Write2": second}, 1, 2, 1)
+
+    assert error is None
+    assert used == {"Read1": (frame,)}
+
+
+def test_shared_file_preserves_every_native_source_node_proof(tmp_path):
+    from dcc_mcp_nuke.script_package_scene import _used_files
+
+    frame = str(tmp_path / "plate.0001.exr")
+    reads = [Node("Read1", {}, "Read"), Node("Read2", {}, "Read")]
+    write = Node("Write1", {}, "Write", dependencies=[(read, [frame, frame]) for read in reads])
+    used, error = _used_files({"Write1": write}, 1, 2, 1)
+    assert error is None
+    assert used == {"Read1": (frame,), "Read2": (frame,)}
+
+
+@pytest.mark.parametrize("invalid", [None, 1, "bad\x00path", "x" * 8193])
+def test_repeated_valid_path_does_not_hide_invalid_native_dependency(tmp_path, invalid):
+    from dcc_mcp_nuke.script_package_scene import _used_files
+
+    frame = str(tmp_path / "plate.0001.exr")
+    read = Node("Read1", {}, "Read")
+    write = Node("Write1", {}, "Write", dependencies=[(read, [frame, frame]), (read, [frame, invalid])])
+    _, error = _used_files({"Write1": write}, 1, 2, 1)
+    assert error == {"query_node": "Write1", "reason": "dependency_query_failed"}

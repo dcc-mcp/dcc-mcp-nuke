@@ -173,8 +173,8 @@ def capture_scene(
 
 def _used_files(nodes: dict[str, Any], first: int, last: int, max_files: int):
     queries = [node for node in nodes.values() if node.Class() in OUTPUT_CLASSES] or list(nodes.values())
-    used: dict[str, tuple[str, ...]] = {}
-    count = 0
+    used: dict[str, dict[str, None]] = {}
+    unique_paths: set[str] = set()
     for node in queries:
         try:
             dependencies = node.fileDependencies(first, last)
@@ -183,11 +183,18 @@ def _used_files(nodes: dict[str, Any], first: int, last: int, max_files: int):
                     not isinstance(path, str) or len(path) > 8192 or "\x00" in path for path in paths
                 ):
                     raise ValueError
-                count += len(paths)
-                if count > max_files:
-                    raise ValueError
                 name = dependency.fullName()
-                used[name] = (*used.get(name, ()), *paths)
+                files = used.setdefault(name, {})
+                # Native Nuke can repeat cumulative lists for every frame and
+                # output. Bound distinct proven files, not repeated SDK rows.
+                for path in paths:
+                    unique_paths.add(path)
+                    if len(unique_paths) > max_files:
+                        raise ValueError
+                    files[path] = None
         except Exception:
-            return used, {"query_node": str(node.fullName())[:256], "reason": "dependency_query_failed"}
-    return used, None
+            return {name: tuple(files) for name, files in used.items()}, {
+                "query_node": str(node.fullName())[:256],
+                "reason": "dependency_query_failed",
+            }
+    return {name: tuple(files) for name, files in used.items()}, None
