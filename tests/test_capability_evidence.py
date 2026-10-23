@@ -1,5 +1,5 @@
 import sys
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 from dcc_mcp_nuke.capability_evidence import runtime_evidence
 
@@ -18,8 +18,12 @@ def test_observation_does_not_invoke_host_api_or_grant_license(monkeypatch):
     def forbidden():
         raise AssertionError("Host APIs must not be invoked")
 
-    monkeypatch.setitem(sys.modules, "nuke", SimpleNamespace(createNode=forbidden, toNode=forbidden, execute=forbidden))
-    monkeypatch.setitem(sys.modules, "hiero.core", SimpleNamespace(projects=forbidden))
+    nuke = ModuleType("nuke")
+    nuke.__dict__.update(createNode=forbidden, toNode=forbidden, execute=forbidden)
+    hiero = ModuleType("hiero.core")
+    hiero.projects = forbidden
+    monkeypatch.setitem(sys.modules, "nuke", nuke)
+    monkeypatch.setitem(sys.modules, "hiero.core", hiero)
     report = runtime_evidence()
     assert all(item["state"] == "observed" for item in report["surfaces"].values())
     assert report["license_status"] == "unknown"
@@ -59,3 +63,27 @@ def test_host_flavor_tool_keeps_legacy_fields_and_adds_evidence(monkeypatch):
     manifest = yaml.safe_load((root / "tools.yaml").read_text())
     schema = next(item for item in manifest["tools"] if item["name"] == "host_flavor")["output_schema"]
     validate(data, schema)
+
+
+def test_lazy_module_hooks_are_never_called(monkeypatch):
+    calls = []
+
+    class LazyModule(ModuleType):
+        def __getattribute__(self, name):
+            calls.append(("getattribute", name))
+            return super().__getattribute__(name)
+
+    module = LazyModule("hiero.core")
+
+    def lazy(name):
+        calls.append(("getattr", name))
+        return lambda: None
+
+    ModuleType.__getattribute__(module, "__dict__")["__getattr__"] = lazy
+    monkeypatch.setitem(sys.modules, "hiero.core", module)
+    report = runtime_evidence()
+    assert calls == []
+    probe = report["surfaces"]["hiero.project_inspection"]
+    assert probe["state"] == "incomplete"
+    assert probe["callable_attributes"] == []
+    assert probe["unobserved_attributes"] == ["projects"]
