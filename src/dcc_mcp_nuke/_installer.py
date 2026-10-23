@@ -60,7 +60,7 @@ _MANAGED_START = "# DCC-MCP NUKE MANAGED START"
 _MANAGED_END = "# DCC-MCP NUKE MANAGED END"
 _READINESS_TOOL = "nuke_diagnostics__ping"
 _HOST_VERSION = re.compile(r"Nuke\s*(?P<major>\d+)\.(?P<minor>\d+)(?:v(?P<release>\d+))?", re.IGNORECASE)
-_OFFICIAL_PYTHON_BY_NUKE_MAJOR = {14: (3, 9), 15: (3, 10), 16: (3, 11), 17: (3, 13)}
+_OFFICIAL_PYTHON_BY_NUKE_MAJOR = {14: (3, 9), 15: (3, 10), 16: (3, 11), 17: (3, 11)}
 
 
 def _validate_core_install_contract() -> dict[str, Any]:

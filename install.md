@@ -38,7 +38,13 @@ Nuke installation. Do not fall back to whichever `python` happens to be on
 | Nuke 14.x | Python 3.9 | 0.14.1+ | 0.20.14+ | Windows/macOS/Linux |
 | Nuke 15.x | Python 3.10 | 0.14.1+ | 0.20.14+ | Windows/macOS/Linux |
 | Nuke 16.x | Python 3.11 | 0.14.1+ | 0.20.14+ | Windows/macOS/Linux |
-| Nuke 17.x | Python 3.13 | 0.14.1+ | 0.20.14+ | Windows/macOS/Linux |
+| Nuke 17.0 / 17.1 | Python 3.11 | 0.14.1+ | 0.20.14+ | Windows/macOS/Linux |
+
+Foundry documents Python 3.11.11 for
+[Nuke 17.0](https://learn.foundry.com/nuke/17.0v2/content/comp_environment/script_editor/nuke_python_module.html)
+and [Nuke 17.1](https://learn.foundry.com/nuke/17.1/content/comp_environment/script_editor/nuke_python_module.html).
+The package's broader Python support and CI matrix do not determine Nuke's
+embedded interpreter version.
 
 The installer checks the selected Nuke version, target interpreter, adapter
 version, Core floor, `NUKE_PATH`, profile, existing receipt, and partial state
