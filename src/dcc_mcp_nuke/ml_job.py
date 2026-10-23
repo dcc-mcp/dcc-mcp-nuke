@@ -5,18 +5,18 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from dcc_mcp_core.cancellation import check_cancelled
 
+from dcc_mcp_nuke.gizmos import _publish_file
 from dcc_mcp_nuke.machine_learning import MachineLearningError, _on_host_thread
-from dcc_mcp_nuke.script_package import _save_snapshot
+from dcc_mcp_nuke.script_package import _copy_stream, _save_snapshot
 
 
 def _stop_owned(process: Any) -> None:
@@ -45,7 +45,15 @@ def _wait_owned(process: Any, timeout: int) -> int:
         _stop_owned(process)
 
 
-def run_ml_job(nuke: Any, node: Any, operation: str, output: Path, *, max_runtime_seconds: int) -> dict[str, Any]:
+def run_ml_job(
+    nuke: Any,
+    node: Any,
+    operation: str,
+    output: Path,
+    *,
+    max_runtime_seconds: int,
+    preflight: Callable[[], Any] | None = None,
+) -> dict[str, Any]:
     """Snapshot on the host thread, then monitor only our matching NukeX child."""
     if type(max_runtime_seconds) is not int or not 1 <= max_runtime_seconds <= 120:
         raise MachineLearningError("max_runtime_seconds must be an integer from 1 through 120")
@@ -70,6 +78,9 @@ def run_ml_job(nuke: Any, node: Any, operation: str, output: Path, *, max_runtim
     try:
 
         def prepare():
+            # The GUI may change after the early preflight. Validate the exact snapshot
+            # in this same main-thread callback, before temporarily changing any knob.
+            snapshot_node = preflight() if preflight is not None else node
             original_name = nuke.root().name()
             plugin_paths = nuke.pluginPath()
             if (
@@ -89,12 +100,12 @@ def run_ml_job(nuke: Any, node: Any, operation: str, output: Path, *, max_runtim
                 "cwd": os.getcwd(),
                 "plugin_paths": list(dict.fromkeys(os.path.abspath(path) for path in plugin_paths)),
             }
-            knob = node["dataDirectory" if operation == "train" else "catFile"]
+            knob = snapshot_node["dataDirectory" if operation == "train" else "catFile"]
             _save_snapshot(nuke, snapshot, [(knob, destination.as_posix(), False)])
             return {
                 "operation": operation,
-                "node": node.fullName(),
-                "node_class": node.Class(),
+                "node": snapshot_node.fullName(),
+                "node_class": snapshot_node.Class(),
                 "snapshot": str(snapshot),
                 "receipt": str(receipt_path),
                 "artifacts": str(artifacts),
@@ -157,20 +168,32 @@ def run_ml_job(nuke: Any, node: Any, operation: str, output: Path, *, max_runtim
             raise MachineLearningError(
                 "native ML job did not produce a bounded model result", "native_execution_failed"
             )
-        check_cancelled()
-        if operation == "convert":
-            with destination.open("rb") as source, output.open("xb") as target:
-                shutil.copyfileobj(source, target, length=1024 * 1024)
-        return {
+        artifact_metadata = [_artifact(path) for path in files]
+        result = {
             "status": "completed",
             "operation": operation,
             "node": request["node"],
             "device": "cpu",
             "job_directory": str(directory),
             "output_path": str(output),
-            "artifacts": [_artifact(path) for path in files],
+            "artifacts": artifact_metadata,
             "live_graph_restored": True,
         }
+        if operation == "convert":
+            publication = directory / "publication.cat"
+            with destination.open("rb") as source, publication.open("xb") as target:
+                _copy_stream(source, target)
+            copied = _artifact(publication)
+            expected = next(item for item in artifact_metadata if item["name"] == destination.name)
+            if (copied["bytes"], copied["sha256"]) != (expected["bytes"], expected["sha256"]):
+                raise MachineLearningError("copied model does not match the native artifact", "native_execution_failed")
+            check_cancelled()
+            # A no-replace hard link exposes only the complete private copy. Do no
+            # further validation/cancellation work after this publication boundary.
+            _publish_file(publication, output, overwrite=False)
+        else:
+            check_cancelled()
+        return result
     except BaseException as exc:
         if isinstance(exc, MachineLearningError):
             exc.context["job_directory"] = str(directory)

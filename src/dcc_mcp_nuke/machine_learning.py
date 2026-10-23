@@ -394,7 +394,9 @@ def train_ml_node(nuke: Any, node_name: str, output_directory: str, *, max_runti
         return node
 
     node = _on_host_thread(nuke, preflight)
-    return run_ml_job(nuke, node, "train", _path(output_directory), max_runtime_seconds=max_runtime_seconds)
+    return run_ml_job(
+        nuke, node, "train", _path(output_directory), max_runtime_seconds=max_runtime_seconds, preflight=preflight
+    )
 
 
 def convert_torchscript_model(
@@ -416,4 +418,11 @@ def convert_torchscript_model(
         return node
 
     node = _on_host_thread(nuke, preflight)
-    return run_ml_job(nuke, node, "convert", _path(output_path, suffix=".cat"), max_runtime_seconds=max_runtime_seconds)
+    return run_ml_job(
+        nuke,
+        node,
+        "convert",
+        _path(output_path, suffix=".cat"),
+        max_runtime_seconds=max_runtime_seconds,
+        preflight=preflight,
+    )
