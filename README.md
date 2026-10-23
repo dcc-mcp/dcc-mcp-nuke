@@ -189,6 +189,13 @@ and undo recording, and removes its temporary graph. Release each returned
 previews (8 MiB each) live until cleanup or normal host exit; raw output clips
 to [0, 1] and does not claim parity with a custom Viewer process.
 
+The `nuke-input-health` skill checks input files, bounded sequence gaps and
+frame sizes, Root/Read/optional Write range coverage, and required plug-in
+classes without editing the graph. Issues are grouped by severity with
+compressed frame ranges; limit and inspection failures are explicit. Supply
+required classes from a handoff manifest to check dependencies absent from the
+active graph. Third-party license availability requires separate verification.
+
 Releases use a canonical tag and exact-main identity check, one digest-bound
 wheel/sdist bundle, and a minimal-OIDC publisher in `release.yaml` and the
 GitHub `pypi` environment. Immediately before publishing, the workflow force-refreshes
