@@ -1,0 +1,215 @@
+tools:
+  - name: inspect_ml_environment
+    description: Inspect AIR host flavor/version, six class candidates and bounded .cat/.pt metadata without creating nodes, reading model bytes, loading models or training.
+    input_schema:
+      type: object
+      additionalProperties: false
+      properties:
+        model_directories: {type: array, maxItems: 8, uniqueItems: true, items: {type: string, minLength: 1, maxLength: 8192}}
+        node_name: {type: string, minLength: 1, maxLength: 512}
+        max_items: {type: integer, minimum: 1, maximum: 256, default: 128}
+        max_scan_entries: {type: integer, minimum: 1, maximum: 20000, default: 4096}
+    output_schema:
+      type: object
+      required: [success, message, error, prompt, context]
+      properties:
+        success: {type: boolean}
+        message: {type: string}
+        error: {type: [string, 'null']}
+        prompt: {type: [string, 'null']}
+        context: {type: object}
+      oneOf:
+        - properties:
+            success: {const: true}
+            error: {type: 'null'}
+            context:
+              type: object
+              required: [host, host_flavor, nodes, model_assets, model_asset_count, models_truncated, scan_incomplete, scanned_entries, model_loading_performed, scope]
+              properties:
+                host: {type: object}
+                host_flavor: {type: string, enum: [nuke, nukex, nukestudio]}
+                nodes: {type: array, maxItems: 6, items: {type: object}}
+                model_assets: {type: array, maxItems: 256, items: {type: object}}
+                model_asset_count: {type: integer, minimum: 0}
+                models_truncated: {type: boolean}
+                scan_incomplete: {type: boolean}
+                scanned_entries: {type: integer, minimum: 0, maximum: 20000}
+                model_loading_performed: {type: boolean, const: false}
+                scope: {type: string}
+                node: {type: object}
+        - properties:
+            success: {const: false}
+            error: {type: string}
+    read_only: true
+    destructive: false
+    idempotent: true
+    execution: sync
+    affinity: main
+    enforce_thread_affinity: true
+    source_file: scripts/inspect_ml_environment.py
+  - name: create_ml_node
+    description: Add one CPU AIR node with exact native settings and explicit input/ground-truth or mask links. Preserve outside graph/selection, resolve name collisions and start no model execution. Training/conversion nodes require NukeX/Studio; BigCat requires 16.1+ and CatFileCreator requires 13.1+.
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [node_class]
+      properties:
+        node_class: {type: string, enum: [CopyCat, BigCat, Inference, Deblur, Upscale, CatFileCreator]}
+        name: {type: string, pattern: '^[A-Za-z_][A-Za-z0-9_]{0,63}$'}
+        input_node: {type: string, minLength: 1, maxLength: 512}
+        reference_node: {type: string, minLength: 1, maxLength: 512}
+        settings:
+          type: object
+          additionalProperties: false
+          properties:
+            dataDirectory: {type: string, minLength: 1, maxLength: 8192}
+            epochs: {type: integer, minimum: 1, maximum: 1000000}
+            initialWeights: {type: string, minLength: 1, maxLength: 128}
+            checkpointFile: {type: string, minLength: 1, maxLength: 8192}
+            modelSize: {type: string, minLength: 1, maxLength: 128}
+            batchSizeType: {type: string, minLength: 1, maxLength: 128}
+            batchSize: {type: integer, minimum: 1, maximum: 256}
+            cropSize: {type: string, minLength: 1, maxLength: 128}
+            checkpointInterval: {type: integer, minimum: 1, maximum: 1000000}
+            imageInterval: {type: integer, minimum: 1, maximum: 1000000}
+            useMultiResolution: {type: boolean}
+            l1Weight: {type: number, minimum: 0, maximum: 100}
+            l2Weight: {type: number, minimum: 0, maximum: 100}
+            modelFile: {type: string, minLength: 1, maxLength: 8192}
+            halfPrecision: {type: boolean}
+            tileSize: {type: string, minLength: 1, maxLength: 128}
+            mix: {type: number, minimum: 0, maximum: 1}
+            torchScriptFile: {type: string, minLength: 1, maxLength: 8192}
+            catFile: {type: string, minLength: 1, maxLength: 8192}
+            channelsIn: {type: array, minItems: 1, maxItems: 64, uniqueItems: true, items: {type: string, pattern: '^[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*$'}}
+            channelsOut: {type: array, minItems: 1, maxItems: 64, uniqueItems: true, items: {type: string, pattern: '^[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*$'}}
+            modelId: {type: string, maxLength: 128}
+            outputScale: {type: array, minItems: 2, maxItems: 2, items: {type: number, exclusiveMinimum: 0, maximum: 16}}
+    output_schema:
+      type: object
+      required: [success, message, error, prompt, context]
+      properties:
+        success: {type: boolean}
+        message: {type: string}
+        error: {type: [string, 'null']}
+        prompt: {type: [string, 'null']}
+        context: {type: object}
+      oneOf:
+        - properties:
+            success: {const: true}
+            error: {type: 'null'}
+            context:
+              type: object
+              required: [node, node_class, host_flavor, settings, inputs, device, execution_started]
+              properties:
+                node: {type: string}
+                node_class: {type: string}
+                host_flavor: {type: string}
+                settings: {type: object}
+                inputs: {type: array, maxItems: 2, items: {type: [string, 'null']}}
+                device: {type: string, const: cpu}
+                execution_started: {type: boolean, const: false}
+        - properties:
+            success: {const: false}
+            error: {type: string}
+    read_only: false
+    destructive: false
+    idempotent: false
+    execution: sync
+    affinity: main
+    enforce_thread_affinity: true
+    source_file: scripts/create_ml_node.py
+  - name: train_ml_node
+    description: Run an existing CPU CopyCat/BigCat with paired inputs and 1–1000 epochs in an owned time-limited matching NukeX child. Preserve the live graph, use Core shared async cancellation, retain partial artifacts, and require a new output directory. No GPU/distributed training or resume.
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [node_name, output_directory]
+      properties:
+        node_name: {type: string, minLength: 1, maxLength: 512}
+        output_directory: {type: string, minLength: 1, maxLength: 8192}
+        max_runtime_seconds: {type: integer, minimum: 1, maximum: 120, default: 60}
+    output_schema:
+      type: object
+      required: [success, message, error, prompt, context]
+      properties:
+        success: {type: boolean}
+        message: {type: string}
+        error: {type: [string, 'null']}
+        prompt: {type: [string, 'null']}
+        context: {type: object}
+      oneOf:
+        - properties:
+            success: {const: true}
+            error: {type: 'null'}
+            context:
+              type: object
+              required: [status, operation, node, device, job_directory, output_path, artifacts, live_graph_restored]
+              properties:
+                status: {type: string, const: completed}
+                operation: {type: string, const: train}
+                node: {type: string}
+                device: {type: string, const: cpu}
+                job_directory: {type: string}
+                output_path: {type: string}
+                artifacts: {type: array, minItems: 1, maxItems: 128, items: {type: object}}
+                live_graph_restored: {type: boolean, const: true}
+        - properties:
+            success: {const: false}
+            error: {type: string}
+    read_only: false
+    destructive: false
+    idempotent: false
+    execution: async
+    job_strategy: monolithic
+    affinity: any
+    enforce_thread_affinity: true
+    timeout_hint_secs: 180
+    source_file: scripts/train_ml_node.py
+  - name: convert_torchscript_model
+    description: Explicitly execute a trusted caller-selected .pt configured on an existing CatFileCreator in a bounded matching NukeX child, producing a new .cat without changing the live graph or creating an implicit Inference. NukeX/Studio required; no downloads/overwrites/GPU workload.
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [node_name, output_path]
+      properties:
+        node_name: {type: string, minLength: 1, maxLength: 512}
+        output_path: {type: string, minLength: 1, maxLength: 8192}
+        max_runtime_seconds: {type: integer, minimum: 1, maximum: 120, default: 60}
+    output_schema:
+      type: object
+      required: [success, message, error, prompt, context]
+      properties:
+        success: {type: boolean}
+        message: {type: string}
+        error: {type: [string, 'null']}
+        prompt: {type: [string, 'null']}
+        context: {type: object}
+      oneOf:
+        - properties:
+            success: {const: true}
+            error: {type: 'null'}
+            context:
+              type: object
+              required: [status, operation, node, device, job_directory, output_path, artifacts, live_graph_restored]
+              properties:
+                status: {type: string, const: completed}
+                operation: {type: string, const: convert}
+                node: {type: string}
+                device: {type: string, const: cpu}
+                job_directory: {type: string}
+                output_path: {type: string}
+                artifacts: {type: array, minItems: 1, maxItems: 128, items: {type: object}}
+                live_graph_restored: {type: boolean, const: true}
+        - properties:
+            success: {const: false}
+            error: {type: string}
+    read_only: false
+    destructive: false
+    idempotent: false
+    execution: async
+    job_strategy: monolithic
+    affinity: any
+    enforce_thread_affinity: true
+    timeout_hint_secs: 180
+    source_file: scripts/convert_torchscript_model.py

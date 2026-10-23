@@ -59,13 +59,14 @@ class NukeDispatcher:
         self._host_dispatcher.tick(16)
 
     def dispatch_callable(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        kwargs.pop("context", None)
+        context = kwargs.pop("context", None)
         kwargs.pop("action_name", None)
         kwargs.pop("skill_name", None)
         kwargs.pop("execution", None)
         kwargs.pop("timeout_hint_secs", None)
-        kwargs.pop("affinity", kwargs.pop("thread_affinity", None))
-        if threading.current_thread() is threading.main_thread():
+        affinity = kwargs.pop("affinity", kwargs.pop("thread_affinity", None))
+        affinity = affinity or getattr(context, "thread_affinity", "main")
+        if affinity == "any" or threading.current_thread() is threading.main_thread():
             return func(*args, **kwargs)
         import nuke  # Lazy import: requires a running Nuke process.
 

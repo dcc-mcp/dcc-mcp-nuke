@@ -127,6 +127,34 @@ startup file on failure. A successful transaction writes
 
 ## Verify
 
+### Operator-pinned UI runtime
+
+An operator can supply Core's `UiControlRuntimeOptions` from a trusted Nuke
+startup script when a separate, pinned DCC-CUA runtime is needed. This requires
+a Core version that provides that class; normal startup retains the documented
+minimum Core version.
+
+```python
+from dcc_mcp_core.server import UiControlRuntimeOptions
+from dcc_mcp_nuke import start_server
+
+start_server(ui_control=UiControlRuntimeOptions(
+    binary="/absolute/path/to/dcc-cua",
+    sha256="<verified SHA-256 of that executable>",
+    runtime_version="<exact runtime version>",
+    transport="owned_mcp_pixels",
+    observation_mode="pixels_only",
+    allowed_actions=("click", "drag", "keypress", "type"),
+))
+```
+
+The binary identity and action list are operator ceilings. Agent Host task
+authorization, exact process/window binding, fresh observations and native
+input checks still apply. Core owns this runtime's child process and session;
+it does not replace another client's running DCC-CUA host. Runtime options are
+not accepted through scene tools or environment JSON. Stop the adapter before
+changing a running server's runtime configuration.
+
 Start the selected Nuke GUI, wait for its plug-in startup, then run:
 
 ```text

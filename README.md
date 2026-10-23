@@ -230,6 +230,21 @@ remain separate verification steps. Use the existing node-graph and Gizmo tools
 after selecting a trusted asset. The skill's source references explain where to
 find Gizmos and how to review, pin, download and use them.
 
+The `nuke-machine-learning` skill inspects and builds the six AIR workflows:
+CopyCat, BigCat beta, Inference, Deblur, Upscale and CatFileCreator. Creation is
+additive and starts no computation. CopyCat, BigCat and CatFileCreator require
+a real NukeX or Studio session; BigCat is available from 16.1. Native knob
+contracts are checked rather than inferred from UI labels. Inference, Deblur
+and Upscale reuse node graph, preview and Write/render tools.
+
+Explicit TorchScript conversion and CPU training use the shared async jobs
+with a 1–120 second wall-clock ceiling and an owned matching NukeX subprocess.
+Training requires paired inputs and 1–1000 epochs; no model downloads, output
+overwrites or implicit training occur. The live graph is restored before
+execution; partial artifacts/logs remain available on cancellation or failure.
+See the [AIR workflow reference](src/dcc_mcp_nuke/skills/nuke-machine-learning/references/air-workflows.md)
+for trusted model inputs, native names, licensing and supported limits.
+
 The `nuke-node-assets` skill packages reusable, versioned Gizmos with an
 explicit public knob interface, instantiates saved assets, and validates live
 instances. Its registered tools use `DCC_MCP_NUKE_PLUGIN_ROOT`, stable ids and

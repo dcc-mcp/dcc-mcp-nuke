@@ -28,8 +28,8 @@ python tools/verify_distribution.py dist --core-version 0.20.14
 
 | Path | Role |
 |---|---|
-| `src/dcc_mcp_nuke/` | Adapter package — host/server dispatch, node graph and layout, compositing, `gizmos.py`, `plugins.py`, file references, previews, input health, script packaging, scripting, text layout, host flavors and installation |
-| `src/dcc_mcp_nuke/skills/` | Shipped domain skills, including `nuke-node-graph`, `nuke-node-assets`, `nuke-plugins`, `nuke-paths`, `nuke-preview`, `nuke-input-health` and `nuke-collect`; each skill's `SKILL.md` and `tools.yaml` define its surface and ship in the wheel |
+| `src/dcc_mcp_nuke/` | Adapter package — host/server dispatch, node graph and layout, compositing, Gizmos/plugins, AIR machine learning and bounded native jobs, file references, previews, input health, script packaging, scripting, text layout, host flavors and installation |
+| `src/dcc_mcp_nuke/skills/` | Shipped domain skills, including `nuke-node-graph`, `nuke-node-assets`, `nuke-plugins`, `nuke-machine-learning`, `nuke-paths`, `nuke-preview`, `nuke-input-health` and `nuke-collect`; each skill's `SKILL.md` and `tools.yaml` define its surface and ship in the wheel |
 | `src/dcc_mcp_nuke/nuke_plugin/` | In-host Nuke plug-in (`init.py`, `menu.py`); shipped as wheel artifacts |
 | `tests/` | pytest suite (`testpaths = ["tests"]`, `pythonpath = ["src"]`) |
 | `tools/` | `lint_skills.py`, `verify_distribution.py`, `release_integrity.py`, `skill_companion_audit.py` |
@@ -44,6 +44,13 @@ What differs is the runtime feature surface. `host_flavor.py` classifies the run
 ```bash
 dcc-mcp-cli call nuke_diagnostics__host_flavor --dcc-type nuke --json '{}'
 ```
+
+AIR inspection stays discoverable in plain Nuke. CopyCat/BigCat training and
+CatFileCreator conversion have per-operation NukeX/Studio gates; BigCat also
+requires 16.1+. Native AIR knobs differ from some user-guide labels: qualify
+the actual class/knob contract. Native validation/snapshot work runs on the host
+main thread, while bounded training/conversion children use Core worker jobs
+and cancellation. Never add a second job registry or arbitrary button execution.
 
 ## Release
 

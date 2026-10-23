@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from dcc_mcp_core import DccServerOptions, HostExecutionBridge
 from dcc_mcp_core.server_base import DccServerBase
@@ -10,31 +10,38 @@ from dcc_mcp_nuke.__version__ import __version__
 from dcc_mcp_nuke.dispatcher import NukeDispatcher
 from dcc_mcp_nuke.host_flavor import HostFlavorGate, HostFlavorReport, detect_host_flavor
 
+if TYPE_CHECKING:
+    from dcc_mcp_core.server import UiControlRuntimeOptions
+
 DEFAULT_PORT = 0
 SERVER_NAME = "dcc-mcp-nuke"
 _server: Optional["NukeMcpServer"] = None
 
 
 class NukeMcpServer(DccServerBase):
-    def __init__(self, port: Optional[int] = None) -> None:
+    def __init__(self, port: Optional[int] = None, *, ui_control: Optional[UiControlRuntimeOptions] = None) -> None:
+        self._ui_control_runtime = ui_control
         self._host_dispatcher = NukeDispatcher()
         self._host_dispatcher.start()
-        execution_bridge = HostExecutionBridge(
-            dispatcher=self._host_dispatcher,
-            host_dispatcher=self._host_dispatcher.host_dispatcher,
-            default_thread_affinity="main",
-            script_materialization_policy="auto",
-        )
-        self._nuke_execution_bridge = execution_bridge
-        options = DccServerOptions.from_env(
-            "nuke",
-            Path(__file__).resolve().parent / "skills",
-            port=port,
-            server_name=SERVER_NAME,
-            server_version=__version__,
-            execution_bridge=execution_bridge,
-        )
         try:
+            execution_bridge = HostExecutionBridge(
+                dispatcher=self._host_dispatcher,
+                host_dispatcher=self._host_dispatcher.host_dispatcher,
+                default_thread_affinity="main",
+                script_materialization_policy="auto",
+            )
+            self._nuke_execution_bridge = execution_bridge
+            # Older supported Core versions do not accept this optional bootstrap argument.
+            runtime_options = {} if ui_control is None else {"ui_control": ui_control}
+            options = DccServerOptions.from_env(
+                "nuke",
+                Path(__file__).resolve().parent / "skills",
+                port=port,
+                server_name=SERVER_NAME,
+                server_version=__version__,
+                execution_bridge=execution_bridge,
+                **runtime_options,
+            )
             super().__init__(options=options)
             self._host_flavor_report = detect_host_flavor()
             self._host_flavor_gate = HostFlavorGate(self._host_flavor_report)
@@ -97,10 +104,14 @@ class NukeMcpServer(DccServerBase):
             return "Nuke"
 
 
-def start_server(port: Optional[int] = None) -> NukeMcpServer:
+def start_server(port: Optional[int] = None, *, ui_control: Optional[UiControlRuntimeOptions] = None) -> NukeMcpServer:
+    """Start with optional operator-owned UI runtime options, never tool arguments."""
     global _server
+    if _server is not None and _server.is_running and ui_control is not None:
+        if ui_control != _server._ui_control_runtime:
+            raise RuntimeError("Stop the Nuke MCP server before changing its UI control runtime")
     if _server is None or not _server.is_running:
-        _server = NukeMcpServer(port)
+        _server = NukeMcpServer(port, ui_control=ui_control) if ui_control is not None else NukeMcpServer(port)
         try:
             _server.register_builtin_actions()
             _server.start()

@@ -116,3 +116,70 @@ def test_start_server_delegates_port_resolution_to_core(
 
     assert result.is_running
     assert captured["port"] == expected_port
+
+
+def test_options_failure_stops_dispatcher(monkeypatch: pytest.MonkeyPatch, dispatcher_spy: dict[str, int]) -> None:
+    def fail_options(*args: Any, **kwargs: Any) -> None:
+        raise ValueError("invalid runtime options")
+
+    monkeypatch.setattr(server_module.DccServerOptions, "from_env", fail_options)
+    with pytest.raises(ValueError, match="invalid runtime options"):
+        server_module.NukeMcpServer()
+    assert dispatcher_spy == {"start": 1, "stop": 1}
+
+
+@pytest.mark.parametrize("explicit_runtime", [False, True])
+def test_runtime_is_only_forwarded_when_explicit(
+    monkeypatch: pytest.MonkeyPatch, dispatcher_spy: dict[str, int], explicit_runtime: bool
+) -> None:
+    runtime = object()
+    captured = {}
+    original = server_module.DccServerOptions.from_env
+
+    def capture_options(*args: Any, **kwargs: Any) -> Any:
+        captured.update(kwargs)
+        kwargs.pop("ui_control", None)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(server_module.DccServerOptions, "from_env", capture_options)
+    server = server_module.NukeMcpServer(ui_control=runtime) if explicit_runtime else server_module.NukeMcpServer()
+    try:
+        if explicit_runtime:
+            assert captured["ui_control"] is runtime
+        else:
+            assert "ui_control" not in captured
+    finally:
+        server.stop()
+
+
+def test_running_server_refuses_runtime_retargeting(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    runtime = object()
+    running = SimpleNamespace(is_running=True, _ui_control_runtime=runtime)
+    monkeypatch.setattr(server_module, "_server", running)
+    assert server_module.start_server() is running
+    assert server_module.start_server(ui_control=runtime) is running
+    with pytest.raises(RuntimeError, match="before changing"):
+        server_module.start_server(ui_control=object())
+
+
+def test_start_server_forwards_trusted_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime = object()
+
+    class FakeServer:
+        is_running = False
+
+        def __init__(self, port: Optional[int], *, ui_control: Any) -> None:
+            assert port is None
+            assert ui_control is runtime
+
+        def register_builtin_actions(self) -> None:
+            pass
+
+        def start(self) -> None:
+            self.is_running = True
+
+    monkeypatch.setattr(server_module, "_server", None)
+    monkeypatch.setattr(server_module, "NukeMcpServer", FakeServer)
+    assert server_module.start_server(ui_control=runtime).is_running
