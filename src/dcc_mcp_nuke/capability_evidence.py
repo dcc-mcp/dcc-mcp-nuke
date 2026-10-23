@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from typing import Any
+from types import ModuleType
 
 
 def runtime_evidence() -> dict:
@@ -20,14 +20,13 @@ def runtime_evidence() -> dict:
     surfaces = {}
     for name, (module_name, attributes) in probes.items():
         module = sys.modules.get(module_name)
+        # Bypass module __getattr__/__getattribute__: lazy host hooks may import
+        # code or initialize a host merely when an absent attribute is requested.
+        namespace = ModuleType.__getattribute__(module, "__dict__") if isinstance(module, ModuleType) else {}
         available = []
         unavailable = []
         for attribute in attributes:
-            try:
-                value: Any = getattr(module, attribute, None)
-                present = callable(value)
-            except Exception:
-                present = False
+            present = callable(namespace.get(attribute))
             (available if present else unavailable).append(attribute)
         surfaces[name] = {
             "module": module_name,
