@@ -16,6 +16,12 @@ from dcc_mcp_nuke.compositing import (
 from dcc_mcp_nuke.plugin import is_gui_host
 
 
+@pytest.fixture(autouse=True)
+def isolate_graph_creation(monkeypatch):
+    # These unit tests exercise composition; the additive contract tests use the real CRUD helper.
+    monkeypatch.setattr(compositing, "create_node_handle", lambda nuke, kind: getattr(nuke.nodes, kind)())
+
+
 def manifest(tmp_path: Path):
     return {
         "script_path": str(tmp_path / "final.nk"),
@@ -311,7 +317,7 @@ def test_build_adds_bounded_albedo_only_inside_selected_materials_and_preserves_
         value.__getitem__.side_effect = knobs.__getitem__
         return value, knobs
 
-    read, _ = node("Read", "first", "last", "origfirst", "origlast")
+    read, _ = node("Read", "file", "first", "last", "origfirst", "origlast")
     read.channels.return_value = ["rgba.red", "albedo.red", "CryptoMaterials.red", "C_Sun.red"]
     beauty, beauty_knobs = node("Beauty", "in")
     albedo, albedo_knobs = node("Outer_Planet_Readability_Albedo", "in")
@@ -334,7 +340,7 @@ def test_build_adds_bounded_albedo_only_inside_selected_materials_and_preserves_
         "maskChannelInput",
     )
     reformat, _ = node("Reformat", "type", "format", "resize")
-    write, _ = node("Write", "file_type")
+    write, _ = node("Write", "file", "file_type")
     root, _ = node("Root", "first_frame", "last_frame", "fps", "format")
     nuke = MagicMock()
     nuke.allNodes.return_value = []
@@ -443,7 +449,7 @@ def test_multilayer_adjustments_preserve_declared_order():
     assert created == ["Grade", "Matte", "Attenuation", "Keymix", "Blur"]
 
 
-def test_multilayer_channel_requirements_and_write_options():
+def test_multilayer_channel_requirements_and_write_options(monkeypatch):
     class Read:
         @staticmethod
         def channels():
@@ -467,7 +473,10 @@ def test_multilayer_channel_requirements_and_write_options():
     write = MagicMock()
     write.knobs.return_value = {"colorspace": MagicMock(), "datatype": MagicMock()}
     write.__getitem__.side_effect = write.knobs.return_value.__getitem__
-    compositing._set_write_options(write, {"output_colorspace": "sRGB", "output_datatype": "16 bit"})
+    monkeypatch.setattr(
+        compositing, "set_write_colorspace", lambda _nuke, _name, value: write["colorspace"].setValue(value)
+    )
+    compositing._set_write_options(nuke, write, {"output_colorspace": "sRGB", "output_datatype": "16 bit"})
     write.knobs.return_value["colorspace"].setValue.assert_called_once_with("sRGB")
     write.knobs.return_value["datatype"].setValue.assert_called_once_with("16 bit")
 
@@ -482,7 +491,7 @@ def test_build_rejects_missing_cryptomatte_for_scoped_adjustments(tmp_path, kind
         value.__getitem__.side_effect = knobs.__getitem__
         return value
 
-    read = node("Read", "first", "last", "origfirst", "origlast")
+    read = node("Read", "file", "first", "last", "origfirst", "origlast")
     read.channels.return_value = ["rgba.red"]
     root = node("Root", "first_frame", "last_frame", "fps", "format")
     nuke = MagicMock()
@@ -516,7 +525,7 @@ def test_build_rejects_missing_albedo_before_creating_fill_nodes(tmp_path):
         value.__getitem__.side_effect = knobs.__getitem__
         return value
 
-    read = node("Read", "first", "last", "origfirst", "origlast")
+    read = node("Read", "file", "first", "last", "origfirst", "origlast")
     read.channels.return_value = ["rgba.red", "CryptoMaterials.red"]
     root = node("Root", "first_frame", "last_frame", "fps", "format")
     nuke = MagicMock()
@@ -766,8 +775,8 @@ def test_build_layered_comp_positions_branches_and_output_deterministically(tmp_
         value.channels.return_value = ["emission.red", "CryptoMaterials.red"]
         return value
 
-    beauty = node("Read1", "first", "last", "origfirst", "origlast")
-    emission = node("Read2", "first", "last", "origfirst", "origlast")
+    beauty = node("Read1", "file", "first", "last", "origfirst", "origlast")
+    emission = node("Read2", "file", "first", "last", "origfirst", "origlast")
     shuffle = node("Shuffle", "in")
     matte = node("Cryptomatte", "cryptoLayer", "matteList")
     attenuation = node("Grade", "multiply")
@@ -775,7 +784,7 @@ def test_build_layered_comp_positions_branches_and_output_deterministically(tmp_
     blur = node("Blur", "size")
     merge = node("Merge", "operation")
     reformat = node("Reformat", "type", "format", "resize")
-    write = node("Write", "file_type")
+    write = node("Write", "file", "file_type")
     root = node("Root", "first_frame", "last_frame", "fps", "format")
     nuke = MagicMock()
     nuke.allNodes.return_value = []

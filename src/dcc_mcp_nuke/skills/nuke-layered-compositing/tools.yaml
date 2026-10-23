@@ -1,6 +1,6 @@
 tools:
   - name: build_layered_comp
-    description: Replace the current graph with a typed multi-file or multilayer-EXR comp and save the .nk script.
+    description: Add a typed multi-file or multilayer-EXR comp while preserving existing nodes, set the declared Root settings, and save the combined .nk script.
     input_schema:
       type: object
       required: [manifest]
@@ -63,7 +63,7 @@ tools:
                           items: {type: string, minLength: 1}
     read_only: false
     destructive: true
-    idempotent: true
+    idempotent: false
     execution: sync
     affinity: main
     timeout_hint_secs: 120

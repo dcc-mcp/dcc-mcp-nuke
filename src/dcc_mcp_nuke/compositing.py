@@ -4,6 +4,9 @@ import re
 from pathlib import Path
 from typing import Any, Mapping
 
+from dcc_mcp_nuke.color_management import set_read_colorspace, set_write_colorspace
+from dcc_mcp_nuke.node_graph import _graph_snapshot, create_node_handle, delete_node_handle
+
 MERGE_OPERATIONS = {"over", "plus", "minus", "multiply", "screen", "max", "min"}
 MAX_MATERIAL_ALBEDO_FILL_STRENGTH = 0.25
 MATERIAL_ADJUSTMENT_ROWS = {
@@ -175,18 +178,74 @@ def _normalize_adjustments(layer: Mapping[str, Any], layer_index: int) -> list[d
 
 
 def build_layered_comp(nuke: Any, manifest: Mapping[str, Any]) -> dict[str, Any]:
-    """Replace the current graph with a layered Read/Merge/Write composite."""
+    """Add a layered Read/Merge/Write composite and save without replacing existing nodes."""
     spec = validate_manifest(manifest)
-    for node in list(nuke.allNodes(recurseGroups=False)):
-        nuke.delete(node)
+    root = nuke.root()
+    with root:
+        before = _graph_snapshot(nuke)
+        selection = [(node, node.isSelected()) for node in before.values()]
+        knobs = root.knobs()
+        previous = {
+            name: knobs[name].value()
+            for name in ("first_frame", "last_frame", "fps", "format", "name")
+            if name in knobs
+        }
+        modified = root.modified()
+        try:
+            for node, _selected in selection:
+                node.setSelected(False)
+            result = _build_layered_comp(nuke, spec)
+            _restore_selection(nuke, selection)
+            _save_script(nuke, spec["script_path"])
+            return result
+        except BaseException:
+            failures = []
+            try:
+                after = _graph_snapshot(nuke)
+                added = {name: node for name, node in after.items() if node not in before.values()}
+                if any(name not in after for name in before):
+                    failures.append("pre-existing graph changed; original node handles were preserved")
+            except Exception as exc:
+                failures.append(str(exc))
+                added = {}
+            for name in sorted(added, key=lambda value: value.count("."), reverse=True):
+                try:
+                    delete_node_handle(nuke, added[name])
+                except Exception as exc:
+                    failures.append(str(exc))
+            for name, value in previous.items():
+                try:
+                    knobs[name].setValue(value)
+                except Exception as exc:
+                    failures.append(str(exc))
+            try:
+                _restore_selection(nuke, selection)
+            except Exception as exc:
+                failures.append(str(exc))
+            root.setModified(True if failures else modified)
+            if failures:
+                raise RuntimeError("layered comp rollback failed: " + "; ".join(failures)) from None
+            raise
 
+
+def _restore_selection(nuke: Any, selection: list[tuple[Any, bool]]) -> None:
+    failures = []
+    for node, selected in [*((node, False) for node in nuke.allNodes(recurseGroups=True)), *selection]:
+        try:
+            node.setSelected(selected)
+        except Exception as exc:
+            failures.append(str(exc))
+    if failures:
+        raise RuntimeError("selection restoration failed: " + "; ".join(failures))
+
+
+def _build_layered_comp(nuke: Any, spec: Mapping[str, Any]) -> dict[str, Any]:
     root = nuke.root()
     root["first_frame"].setValue(spec["first_frame"])
     root["last_frame"].setValue(spec["last_frame"])
     root["fps"].setValue(spec["fps"])
-    format_name = "dcc_mcp_output"
-    nuke.addFormat(f"{spec['width']} {spec['height']} 1 {format_name}")
-    root["format"].setValue(format_name)
+    output_format = nuke.addFormat(f"{spec['width']} {spec['height']} 1")
+    root["format"].setValue(output_format)
 
     reads = []
     channel_nodes = []
@@ -196,12 +255,13 @@ def build_layered_comp(nuke: Any, manifest: Mapping[str, Any]) -> dict[str, Any]
     merge_start_y = (max(_layer_row_count(layer) for layer in spec["layers"]) + 1) * NODE_ROW_SPACING
     for index, layer in enumerate(spec["layers"]):
         layer_x = index * NODE_COLUMN_SPACING
-        read = nuke.nodes.Read(file=_nuke_path(layer["path"]))
+        read = create_node_handle(nuke, "Read")
+        read["file"].setValue(_nuke_path(layer["path"]))
         _set_read_frame_range(read, spec["first_frame"], spec["last_frame"])
         read.setName(_node_name(layer["name"], f"Layer_{index + 1}"))
         _set_node_position(read, layer_x, 0)
-        if layer["colorspace"] and "colorspace" in read.knobs():
-            read["colorspace"].setValue(str(layer["colorspace"]))
+        if layer["colorspace"]:
+            set_read_colorspace(nuke, read.name(), str(layer["colorspace"]))
         reads.append(read.name())
         requirements = [*spec["required_layers"]]
         if layer["channel"]:
@@ -239,7 +299,7 @@ def build_layered_comp(nuke: Any, manifest: Mapping[str, Any]) -> dict[str, Any]
             current = adjusted
             current_y = _layer_row_count(layer) * NODE_ROW_SPACING
             continue
-        merge = nuke.nodes.Merge2()
+        merge = create_node_handle(nuke, "Merge2")
         merge.setName(f"Merge_{index + 1:02d}_{layer['operation']}")
         merge["operation"].setValue(layer["operation"])
         _connect_merge(merge, background=current, foreground=adjusted)
@@ -249,21 +309,21 @@ def build_layered_comp(nuke: Any, manifest: Mapping[str, Any]) -> dict[str, Any]
 
     output = Path(spec["output_path"])
     output.parent.mkdir(parents=True, exist_ok=True)
-    current, output_format_node = _apply_output_format(nuke, current, format_name)
+    current, output_format_node = _apply_output_format(nuke, current, output_format)
     output_x = (len(spec["layers"]) - 1) * NODE_COLUMN_SPACING
     current_y += NODE_ROW_SPACING
     _set_node_position(current, output_x, current_y)
-    write = nuke.nodes.Write(file=_nuke_path(output))
+    write = create_node_handle(nuke, "Write")
+    write["file"].setValue(_nuke_path(output))
     write.setName("DCC_MCP_FINAL_WRITE")
     write.setInput(0, current)
     _set_node_position(write, output_x, current_y + NODE_ROW_SPACING)
     if "file_type" in write.knobs():
         write["file_type"].setValue(_file_type(output))
-    _set_write_options(write, spec)
+    _set_write_options(nuke, write, spec)
 
     script = Path(spec["script_path"])
     script.parent.mkdir(parents=True, exist_ok=True)
-    _save_script(nuke, script)
     return {
         "script_path": str(script),
         "output_path": str(output),
@@ -277,23 +337,23 @@ def build_layered_comp(nuke: Any, manifest: Mapping[str, Any]) -> dict[str, Any]
     }
 
 
-def _apply_output_format(nuke: Any, node: Any, format_name: str) -> tuple[Any, str]:
+def _apply_output_format(nuke: Any, node: Any, output_format: Any) -> tuple[Any, str]:
     """Make the manifest resolution authoritative instead of inheriting the input format."""
-    reformat = nuke.nodes.Reformat()
+    reformat = create_node_handle(nuke, "Reformat")
     reformat.setName("DCC_MCP_OUTPUT_FORMAT")
     reformat.setInput(0, node)
     knobs = reformat.knobs()
     if "type" in knobs:
         reformat["type"].setValue("to format")
     if "format" in knobs:
-        reformat["format"].setValue(format_name)
+        reformat["format"].setValue(output_format)
     if "resize" in knobs:
         reformat["resize"].setValue("fit")
     return reformat, reformat.name()
 
 
 def _shuffle_layer(nuke: Any, read: Any, channel: str, index: int) -> Any:
-    shuffle = nuke.nodes.Shuffle()
+    shuffle = create_node_handle(nuke, "Shuffle")
     shuffle.setName(f"Shuffle_{index + 1:02d}_{_node_name(channel, 'layer')}")
     shuffle.setInput(0, read)
     input_knob = "in" if "in" in shuffle.knobs() else "in1"
@@ -319,7 +379,7 @@ def _apply_layer_adjustments(
             fallback = f"{operation['kind']}_{index + 1:02d}_{operation_index + 1:02d}"
             name = _node_name(operation.get("name") or fallback, fallback)
             if operation["kind"] == "grade":
-                grade = nuke.nodes.Grade()
+                grade = create_node_handle(nuke, "Grade")
                 grade.setName(name)
                 grade.setInput(0, current)
                 grade["multiply"].setValue(operation["gain"])
@@ -330,7 +390,7 @@ def _apply_layer_adjustments(
                 current = grade
                 created.append(grade.name())
             elif operation["kind"] == "blur":
-                blur = nuke.nodes.Blur()
+                blur = create_node_handle(nuke, "Blur")
                 blur.setName(name)
                 blur.setInput(0, current)
                 blur["size"].setValue(operation["size"])
@@ -340,20 +400,20 @@ def _apply_layer_adjustments(
                 current = blur
                 created.append(blur.name())
             else:
-                matte = nuke.nodes.Cryptomatte()
+                matte = create_node_handle(nuke, "Cryptomatte")
                 matte.setName(f"{name}_Crypto")
                 matte.setInput(0, matte_source if matte_source is not None else node)
                 matte["cryptoLayer"].setValue(operation["crypto_layer"])
                 matte["matteList"].setValue(", ".join(operation["materials"]))
 
                 if operation["kind"] == "material_albedo_fill":
-                    albedo = nuke.nodes.Shuffle()
+                    albedo = create_node_handle(nuke, "Shuffle")
                     albedo.setName(f"{name}_Albedo")
                     albedo.setInput(0, matte_source if matte_source is not None else node)
                     input_knob = "in" if "in" in albedo.knobs() else "in1"
                     albedo[input_knob].setValue(operation["albedo_layer"])
 
-                    bounded = nuke.nodes.Clamp()
+                    bounded = create_node_handle(nuke, "Clamp")
                     bounded.setName(f"{name}_Bounded_Albedo")
                     bounded.setInput(0, albedo)
                     bounded["channels"].setValue("rgb")
@@ -362,12 +422,12 @@ def _apply_layer_adjustments(
                     bounded["maximum"].setValue(1.0)
                     bounded["maximum_enable"].setValue(True)
 
-                    fill = nuke.nodes.Grade()
+                    fill = create_node_handle(nuke, "Grade")
                     fill.setName(f"{name}_Creative_Fill")
                     fill.setInput(0, bounded)
                     fill["multiply"].setValue(operation["strength"])
 
-                    merge = nuke.nodes.Merge2()
+                    merge = create_node_handle(nuke, "Merge2")
                     merge.setName(f"{name}_Material_Albedo_Fill")
                     merge.setInput(0, current)
                     merge.setInput(1, fill)
@@ -390,32 +450,32 @@ def _apply_layer_adjustments(
                     continue
 
                 if operation["kind"] == "material_edge_blur":
-                    unpremult = nuke.nodes.Unpremult()
+                    unpremult = create_node_handle(nuke, "Unpremult")
                     unpremult.setName(f"{name}_Unpremult")
                     unpremult.setInput(0, current)
                     unpremult["channels"].setValue("rgb")
                     unpremult["alpha"].setValue("rgba.alpha")
 
-                    matte_alpha = nuke.nodes.Copy()
+                    matte_alpha = create_node_handle(nuke, "Copy")
                     matte_alpha.setName(f"{name}_Matte_Alpha")
                     matte_alpha.setInput(0, matte)
                     matte_alpha.setInput(1, unpremult)
                     matte_alpha["from0"].setValue("rgba.alpha")
                     matte_alpha["to0"].setValue("rgba.alpha")
 
-                    edge_blur = nuke.nodes.EdgeBlur()
+                    edge_blur = create_node_handle(nuke, "EdgeBlur")
                     edge_blur.setName(f"{name}_EdgeBlur")
                     edge_blur.setInput(0, matte_alpha)
                     edge_blur["channels"].setValue("rgba")
                     edge_blur["size"].setValue(operation["size"])
 
-                    premult = nuke.nodes.Premult()
+                    premult = create_node_handle(nuke, "Premult")
                     premult.setName(f"{name}_Premult")
                     premult.setInput(0, edge_blur)
                     premult["channels"].setValue("rgb")
                     premult["alpha"].setValue("rgba.alpha")
 
-                    keymix = nuke.nodes.Keymix()
+                    keymix = create_node_handle(nuke, "Keymix")
                     keymix.setName(f"{name}_Material_Keymix")
                     keymix.setInput(0, current)
                     keymix.setInput(1, premult)
@@ -446,16 +506,16 @@ def _apply_layer_adjustments(
                     continue
 
                 if operation["kind"] == "material_gain":
-                    adjusted = nuke.nodes.Grade()
+                    adjusted = create_node_handle(nuke, "Grade")
                     adjusted.setName(f"{name}_Attenuated")
                     adjusted["multiply"].setValue(operation["gain"])
                 else:
-                    adjusted = nuke.nodes.Saturation()
+                    adjusted = create_node_handle(nuke, "Saturation")
                     adjusted.setName(f"{name}_Saturated")
                     adjusted["saturation"].setValue(operation["saturation"])
                 adjusted.setInput(0, current)
 
-                keymix = nuke.nodes.Keymix()
+                keymix = create_node_handle(nuke, "Keymix")
                 keymix.setName(f"{name}_Material_Keymix")
                 keymix.setInput(0, current)
                 keymix.setInput(1, adjusted)
@@ -474,7 +534,7 @@ def _apply_layer_adjustments(
         return current, created
 
     if layer["gain"] != 1.0:
-        grade = nuke.nodes.Grade()
+        grade = create_node_handle(nuke, "Grade")
         grade.setName(f"Grade_{index + 1:02d}")
         grade.setInput(0, current)
         grade["multiply"].setValue(layer["gain"])
@@ -484,7 +544,7 @@ def _apply_layer_adjustments(
         current = grade
         created.append(grade.name())
     if layer["blur_size"] > 0.0:
-        blur = nuke.nodes.Blur()
+        blur = create_node_handle(nuke, "Blur")
         blur.setName(f"Blur_{index + 1:02d}")
         blur.setInput(0, current)
         blur["size"].setValue(layer["blur_size"])
@@ -506,12 +566,12 @@ def _require_layers(read: Any, required_layers: list[str]) -> None:
         raise RuntimeError(f"Nuke EXR is missing required layers: {', '.join(missing)}")
 
 
-def _set_write_options(write: Any, spec: Mapping[str, Any]) -> None:
+def _set_write_options(nuke: Any, write: Any, spec: Mapping[str, Any]) -> None:
+    if spec.get("output_colorspace"):
+        set_write_colorspace(nuke, write.name(), spec["output_colorspace"])
     knobs = write.knobs()
-    for manifest_key, knob_name in (("output_colorspace", "colorspace"), ("output_datatype", "datatype")):
-        value = spec.get(manifest_key)
-        if value and knob_name in knobs:
-            write[knob_name].setValue(value)
+    if spec.get("output_datatype") and "datatype" in knobs:
+        write["datatype"].setValue(spec["output_datatype"])
 
 
 def _set_read_frame_range(read: Any, first: int, last: int) -> None:
@@ -549,7 +609,7 @@ def _set_node_position(node: Any, x: int, y: int) -> None:
 
 
 def _save_script(nuke: Any, path: str | Path) -> None:
-    """Save without a GUI overwrite prompt so repeated builds stay idempotent."""
+    """Save to the explicitly requested path without a GUI overwrite prompt."""
     nuke.scriptSaveAs(_nuke_path(path), overwrite=1)
 
 

@@ -139,6 +139,14 @@ an available instance port. Use `dcc-mcp-cli list` or the stable gateway at
 `http://127.0.0.1:9765/mcp` to discover and connect to the running instance.
 Set `DCC_MCP_NUKE_PORT` only when a fixed direct port is required.
 
+The `nuke-layered-compositing` template adds a composite to the current graph
+through checked node CRUD without deleting existing work. It preserves existing
+node names, connections, knobs, and selection; collisions get new unique names.
+It applies the manifest's Root settings and saves the combined script to the
+explicit `script_path`. Failed builds remove only added nodes and restore Root
+settings and selection. Read/Write colorspaces use the same enumerated-name
+validation as `nuke-color`. Repeated builds add another branch.
+
 The bundled `nuke-script` skill can open an existing absolute `.nk` path,
 inspect bounded node topology and knob values, sample per-channel AOV
 statistics, and explicitly save the current script. It also starts a fresh
