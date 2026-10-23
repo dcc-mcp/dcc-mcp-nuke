@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.18.0](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.17.0...v0.18.0) (2026-10-23)
+
+
+### Features
+
+* add scoped native node layout ([#96](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/96)) ([6e3aa20](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/6e3aa20149de5c36b11b186bac8c139af9ae6b5a))
+* inspect plugins and harden Gizmo loading ([#97](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/97)) ([3241a57](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/3241a577b0861090c2f4dbed7c4dcf0a9fbce985))
+
+
+### Bug Fixes
+
+* match Nuke 17 embedded Python runtime ([#94](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/94)) ([b892551](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/b892551750d0ccbf376eb882d5d0ca62f48b9107))
+
 ## [0.17.0](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.16.3...v0.17.0) (2026-10-23)
 
 
