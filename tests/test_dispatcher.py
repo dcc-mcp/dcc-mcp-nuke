@@ -4,6 +4,8 @@ import sys
 import threading
 from types import SimpleNamespace
 
+import pytest
+
 from dcc_mcp_nuke.dispatcher import NukeDispatcher
 
 
@@ -107,3 +109,17 @@ def test_dispatcher_uses_nuke_main_thread_api_from_worker(monkeypatch):
 
     assert dispatcher.dispatch_callable(lambda value: value + 1, 4) == 5
     assert len(fake_nuke.main_thread_calls) == 1
+
+
+@pytest.mark.parametrize(
+    "metadata", [{"affinity": "any"}, {"thread_affinity": "any"}, {"context": SimpleNamespace(thread_affinity="any")}]
+)
+def test_any_affinity_does_not_block_the_nuke_ui_thread(monkeypatch, metadata):
+    fake_nuke = FakeNuke()
+    monkeypatch.setitem(sys.modules, "nuke", fake_nuke)
+    dispatcher = NukeDispatcher(host_dispatcher=FakeHostDispatcher())
+    monkeypatch.setattr(threading, "current_thread", lambda: SimpleNamespace(name="worker"))
+    monkeypatch.setattr(threading, "main_thread", lambda: SimpleNamespace(name="main"))
+
+    assert dispatcher.dispatch_callable(lambda: "worker result", **metadata) == "worker result"
+    assert fake_nuke.main_thread_calls == []
