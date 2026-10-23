@@ -147,6 +147,116 @@ def _ocio_root(config="aces_1.2", presets=("aces_1.2", "nuke-default", "custom")
     }
 
 
+def test_describe_color_management_reads_nuke17_ocio_config_knob():
+    nuke = FakeNuke(
+        {
+            "colorManagement": FakeKnob("OCIO"),
+            "workingSpaceLUT": FakeKnob("linear"),
+            "OCIO_config": FakeKnob("aces_1.2", values=["aces_1.2", "nuke-default"]),
+        },
+        colorspaces=["linear", "sRGB"],
+    )
+
+    result = describe_color_management(nuke)
+
+    assert result["ocio_config"] == "aces_1.2"
+    assert result["available_ocio_configs"] == ["aces_1.2", "nuke-default"]
+
+
+def test_describe_color_management_falls_back_to_legacy_ocio_config_knob():
+    result = describe_color_management(FakeNuke(_ocio_root()))
+
+    assert result["ocio_config"] == "aces_1.2"
+    assert result["available_ocio_configs"] == ["aces_1.2", "nuke-default", "custom"]
+
+
+def test_describe_color_management_prefers_nuke17_knob_when_both_are_present():
+    root = _ocio_root(config="legacy-config")
+    root["OCIO_config"] = FakeKnob("nuke17-config", values=["nuke17-config", "nuke-default"])
+
+    result = describe_color_management(FakeNuke(root))
+
+    assert result["ocio_config"] == "nuke17-config"
+    assert result["available_ocio_configs"] == ["nuke17-config", "nuke-default"]
+
+
+def test_set_ocio_config_uses_nuke17_knob_name():
+    ocio = FakeKnob("nuke-default", values=["aces_1.2\tACES/aces_1.2", "nuke-default"])
+    nuke = FakeNuke({"OCIO_config": ocio, "colorManagement": FakeKnob("OCIO")})
+
+    result = set_ocio_config(nuke, "aces_1.2")
+
+    assert result["ocio_config"] == "aces_1.2"
+    assert ocio.value() == "aces_1.2"
+
+
+def test_describe_color_management_strips_menu_labels_from_enumerations():
+    nuke = FakeNuke(
+        {
+            "OCIO_config": FakeKnob(
+                "fn-nuke-ocio-v2.4",
+                values=["fn-nuke-ocio-v2.4\tACES/fn-nuke-ocio-v2.4", "aces_1.2\tACES/aces_1.2"],
+            )
+        },
+        colorspaces=["color_picking\tcolor_picking (sRGB)", "scene_linear\tscene_linear (ACES)"],
+    )
+
+    result = describe_color_management(nuke)
+
+    assert result["ocio_config"] == "fn-nuke-ocio-v2.4"
+    assert result["available_ocio_configs"] == ["fn-nuke-ocio-v2.4", "aces_1.2"]
+    assert result["available_ocio_config_count"] == 2
+    assert result["colorspaces"] == ["color_picking", "scene_linear"]
+    assert result["colorspace_count"] == 2
+
+
+def test_describe_color_management_deduplicates_menu_label_variants():
+    nuke = FakeNuke(
+        {},
+        colorspaces=["scene_linear\tscene_linear (ACES)", "scene_linear\tscene linear", "sRGB"],
+    )
+
+    result = describe_color_management(nuke)
+
+    assert result["colorspaces"] == ["scene_linear", "sRGB"]
+    assert result["colorspace_count"] == 2
+    assert result["colorspaces_truncated"] is False
+
+
+def test_set_read_colorspace_accepts_short_name_when_enum_carries_labels():
+    colorspace = FakeKnob("sRGB", values=["scene_linear\tscene_linear (ACES)", "sRGB\tsRGB"])
+    read = FakeNode("Read1", "Read", {"colorspace": colorspace})
+    nuke = FakeNuke(nodes=[read])
+
+    result = set_read_colorspace(nuke, "Read1", "scene_linear")
+
+    assert result["colorspace"] == "scene_linear"
+    assert result["available_colorspaces"] == 2
+    assert colorspace.value() == "scene_linear"
+
+
+def test_set_write_colorspace_accepts_short_name_when_enum_carries_labels():
+    colorspace = FakeKnob("sRGB", values=["scene_linear\tscene_linear (ACES)", "sRGB\tsRGB"])
+    write = FakeNode("Write1", "Write", {"colorspace": colorspace})
+    nuke = FakeNuke(nodes=[write])
+
+    result = set_write_colorspace(nuke, "Write1", "scene_linear")
+
+    assert result["colorspace"] == "scene_linear"
+    assert colorspace.value() == "scene_linear"
+
+
+def test_set_read_colorspace_rejects_menu_label_spliced_name():
+    colorspace = FakeKnob("sRGB", values=["scene_linear\tscene_linear (ACES)", "sRGB\tsRGB"])
+    read = FakeNode("Read1", "Read", {"colorspace": colorspace})
+    nuke = FakeNuke(nodes=[read])
+
+    with pytest.raises(ColorManagementValidationError):
+        set_read_colorspace(nuke, "Read1", "scene_linear\tscene_linear (ACES)")
+
+    assert colorspace.value() == "sRGB"
+
+
 def test_describe_color_management_reports_mode_config_and_enumerations():
     nuke = FakeNuke(_ocio_root(), colorspaces=["linear", "sRGB", "rec709"])
 
