@@ -21,18 +21,27 @@ from dcc_mcp_nuke.file_references import (
     FileReferenceValidationError,
     _boolean,
     _bounded_int,
-    _describe,
     _expression,
     _literal_path,
-    _references,
     reference_path,
     sequence_files,
     sequence_pattern,
 )
 from dcc_mcp_nuke.gizmos import _publish_file
+from dcc_mcp_nuke.script_package_scene import (
+    OUTPUT_CLASSES as _OUTPUT_CLASSES,
+)
+from dcc_mcp_nuke.script_package_scene import (
+    PackageScriptError,
+    capture_scene,
+    on_host_thread,
+    scene_signature,
+)
+from dcc_mcp_nuke.script_package_scene import (
+    serialization as _serialization,
+)
 
 _RELATIVE = "[file dirname [value root.name]]/"
-_OUTPUT_CLASSES = {"Write", "DeepWrite", "WriteGeo", "WriteGeo2"}
 _FONT = re.compile(r"^(.*?\s:\s.*?\s:\s)(.*?)(\s:\s[0-9]+\s*\}?)$")
 _SCRIPT_EXTENSIONS = {".gizmo", ".gznc", ".py", ".tcl"}
 _MAX_MANIFEST_BYTES = 50000000
@@ -63,24 +72,20 @@ def package_script(
         raise FileReferenceValidationError("output_path already exists; packages never overwrite targets")
     if not target.parent.is_dir():
         raise FileReferenceValidationError("output_path parent must be an existing directory")
-    root = nuke.root()
-    first = root.firstFrame() if first_frame is None else first_frame
-    last = root.lastFrame() if last_frame is None else last_frame
-    _bounded_int("first_frame", first, -1000000, 1000000)
-    _bounded_int("last_frame", last, -1000000, 1000000)
-    if last < first or last - first > 100000:
-        raise FileReferenceValidationError("frame range must be ordered and span at most 100001 frames")
-    records, count = _references(nuke, max_references, None)
-    if count > max_references:
-        raise FileReferenceValidationError("references exceed max_references")
-    nodes = {node.fullName(): node for node in nuke.allNodes(group=root, recurseGroups=True)}
-    if len(nodes) > max_references:
-        raise FileReferenceValidationError("node count exceeds max_references")
-    for name, knob in sorted(root.knobs().items()):
-        if name != "name" and knob.Class() == "File_Knob":
-            records.append((_describe(root, "Root", name, knob), knob))
-    if len(records) > max_references:
-        raise FileReferenceValidationError("references including Root exceed max_references")
+    cwd = os.getcwd()
+    scene = on_host_thread(
+        nuke,
+        lambda: capture_scene(
+            nuke,
+            frame_mode=frame_mode,
+            first_frame=first_frame,
+            last_frame=last_frame,
+            max_references=max_references,
+            max_files=max_files,
+            require_signature=not dry_run,
+        ),
+    )
+    first, last = scene.first, scene.last
     files: dict[str, dict[str, Any]] = {}
     destinations = {}
     total_bytes = 0
@@ -106,11 +111,26 @@ def package_script(
                 raise FileReferenceValidationError("package exceeds max_files or max_total_bytes")
         return files[key]["relative_path"]
 
-    used = _used_files(nodes, first, last) if frame_mode == "used" else {}
-    for record, knob in records:
+    used = {
+        node: {os.path.normcase(os.path.abspath(os.path.join(cwd, path))) for path in paths}
+        for node, paths in scene.used.items()
+    }
+    for record in scene.records:
         check_cancelled()
         identity = {key: record[key] for key in ("node", "class", "knob")}
         raw = record["raw_value"]
+        if (
+            frame_mode == "used"
+            and record["class"] not in {*_OUTPUT_CLASSES, "Root"}
+            and (record["error"] or (not raw and (record["expression"] or record["animated"])))
+        ):
+            raise PackageScriptError(
+                "used-frame dependencies could not be proven for an unreadable reference",
+                "reference_unreadable",
+                **identity,
+                path=(raw or record["evaluated_path"] or "")[:8192],
+                frame_range=[first, last],
+            )
         if not raw:
             if record["error"]:
                 unrewritten.append(dict(identity, reason="unreadable"))
@@ -119,7 +139,7 @@ def package_script(
             # Nuke derives this read-only value even when enabled()/READ_ONLY report it writable.
             unrewritten.append(dict(identity, reason="host_managed_ocio_config"))
             continue
-        multiple_contexts = _serialization(knob, None) != _serialization(knob, nuke.OutputContext())
+        multiple_contexts = record["multiple_contexts"]
         if record["class"] in _OUTPUT_CLASSES:
             if multiple_contexts or record["expression"] or record["animated"] or record["error"]:
                 unrewritten.append(
@@ -128,24 +148,24 @@ def package_script(
                 continue
             relative = f"renders/{_safe_name(record['node'])}/{posixpath.basename(raw.replace(chr(92), '/'))}"
             outputs.append(posixpath.dirname(relative))
-            rewrites.append((knob, _RELATIVE + relative, False))
+            rewrites.append((identity, _RELATIVE + relative, False))
             continue
         source_path = reference_path(record)
         if not source_path or record["error"]:
             unrewritten.append(dict(identity, reason="unreadable"))
             continue
-        source_path = _resolve_source(nuke, source_path)
-        sources = sequence_files(source_path, max_files=max_files)
+        source_path = _resolve_source(scene, source_path, cwd)
         if frame_mode == "used" and "frame" in sequence_pattern(Path(source_path).name).groupindex:
-            source_node = record["node"]
-            needed = used.get(source_node)
-            if needed is None:
-                raise FileReferenceRuntimeError("used-frame dependencies could not be proven for a sequence")
-            sources = [source for source in sources if os.path.normcase(os.path.abspath(source)) in needed]
-            pattern = sequence_pattern(Path(source_path).name)
-            for needed_path in sorted(needed):
-                if pattern.fullmatch(Path(needed_path).name) and not Path(needed_path).is_file():
+            needed = _used_reference_paths(scene, record, source_path, used.get(record["node"]))
+            sources = []
+            for needed_path in needed:
+                check_cancelled()
+                if Path(needed_path).is_file():
+                    sources.append(needed_path)
+                else:
                     missing.append(dict(identity, path=needed_path))
+        else:
+            sources = sequence_files(source_path, max_files=max_files)
         if not sources:
             missing.append(dict(identity, path=source_path))
             continue
@@ -160,14 +180,14 @@ def package_script(
         elif record["expression"] or record["animated"]:
             unrewritten.append(dict(identity, reason="expression" if record["expression"] else "animated"))
         else:
-            rewrites.append((knob, _RELATIVE + relative, False))
+            rewrites.append((identity, _RELATIVE + relative, False))
 
-    plugins, runtime = _plugin_dependencies(nuke, nodes, add_file, max_files)
-    _font_dependencies(nuke, nodes, add_file, rewrites, missing, unrewritten, plugins)
+    plugins, runtime = _plugin_dependencies(scene, add_file, cwd)
+    _font_dependencies(scene, add_file, rewrites, missing, unrewritten, plugins, cwd)
     manifest = {
         "schema_version": 1,
         "script": "script.nk",
-        "original_script": str(root.name()),
+        "original_script": scene.original_script,
         "frame_mode": frame_mode,
         "frame_range": [first, last],
         "files": sorted(files.values(), key=lambda item: item["relative_path"]),
@@ -204,7 +224,7 @@ def package_script(
                 raise FileReferenceRuntimeError("source dependency changed during copy or copied size does not match")
         for relative in outputs:
             (stage / relative).mkdir(parents=True, exist_ok=True)
-        _save_snapshot(nuke, stage / "script.nk", rewrites)
+        _serialize_package_scene(nuke, scene, stage / "script.nk", rewrites, max_references)
         check_cancelled()
         (stage / "manifest.json").write_text(manifest_text, encoding="utf-8")
         (stage / "README.txt").write_text(
@@ -280,7 +300,60 @@ def inspect_package(output_path: str, *, max_report_items: int = 256) -> dict[st
             archive.close()
 
 
-def _save_snapshot(nuke, path, rewrites):
+def _used_reference_paths(scene, record, source_path, needed):
+    reason = None
+    if scene.used_error:
+        reason = scene.used_error["reason"]
+    elif needed is None:
+        reason = "dependency_not_reported"
+    elif not needed:
+        reason = "dependency_paths_empty"
+    else:
+        pattern = sequence_pattern(Path(source_path).name)
+        directory = os.path.normcase(os.path.abspath(Path(source_path).parent))
+        needed = sorted(
+            path
+            for path in needed
+            if pattern.fullmatch(Path(path).name) and os.path.normcase(os.path.abspath(Path(path).parent)) == directory
+        )
+        if not needed:
+            reason = "dependency_path_mismatch"
+    if reason:
+        raise PackageScriptError(
+            "used-frame dependencies could not be proven for a sequence",
+            reason,
+            **{key: record[key] for key in ("node", "class", "knob")},
+            path=source_path[:8192],
+            frame_range=[scene.first, scene.last],
+            **({"query_node": scene.used_error["query_node"]} if scene.used_error else {}),
+        )
+    return needed
+
+
+def _serialize_package_scene(nuke, scene, path, rewrites, max_references):
+    # Native serialization stays local; slow network writes and validation run
+    # on the worker after the live graph has been restored.
+    with tempfile.TemporaryDirectory(prefix="dcc-mcp-collect-script-") as temporary:
+        local = Path(temporary) / "script.nk"
+
+        def serialize():
+            if scene_signature(nuke, max_references) != scene.signature:
+                raise PackageScriptError("Nuke scene changed since collection snapshot", "scene_changed_since_snapshot")
+            root = nuke.root()
+            nodes = {node.fullName(): node for node in nuke.allNodes(group=root, recurseGroups=True)}
+            bound = []
+            for identity, value, serialized in rewrites:
+                node = root if identity["class"] == "Root" else nodes[identity["node"]]
+                bound.append((node.knobs()[identity["knob"]], value, serialized))
+            _save_snapshot(nuke, local, bound, verify_file=False)
+
+        on_host_thread(nuke, serialize)
+        if not local.is_file() or not local.stat().st_size:
+            raise FileReferenceRuntimeError("Nuke did not serialize the copied script")
+        shutil.copyfile(local, path)
+
+
+def _save_snapshot(nuke, path, rewrites, *, verify_file=True):
     root = nuke.root()
     original_name = root.name()
     modified = root.modified()
@@ -307,7 +380,7 @@ def _save_snapshot(nuke, path, rewrites):
             if not matches:
                 raise FileReferenceRuntimeError("copied script path readback does not match request")
         nuke.scriptSaveToTemp(str(path))
-        if not path.is_file() or not path.stat().st_size:
+        if verify_file and (not path.is_file() or not path.stat().st_size):
             raise FileReferenceRuntimeError("Nuke did not serialize the copied script")
     except Exception:
         failure = "failed to serialize the copied script"
@@ -333,46 +406,16 @@ def _save_snapshot(nuke, path, rewrites):
         raise FileReferenceRuntimeError(failure)
 
 
-def _used_files(nodes, first, last):
-    outputs = [node for node in nodes.values() if node.Class() in _OUTPUT_CLASSES]
-    queries = outputs or list(nodes.values())
-    used = {}
-    try:
-        for node in queries:
-            for dependency, paths in node.fileDependencies(first, last):
-                if not isinstance(paths, (list, tuple)) or len(paths) > 100000:
-                    raise ValueError
-                key = dependency.fullName()
-                used.setdefault(key, set()).update(os.path.normcase(os.path.abspath(path)) for path in paths)
-        return used
-    except Exception:
-        raise FileReferenceRuntimeError("Nuke used-frame dependency query failed") from None
-
-
-def _serialization(knob, context):
-    serialized = knob.toScript(False, context)
-    if not isinstance(serialized, str) or len(serialized) > 1000000:
-        raise FileReferenceRuntimeError("knob full-context serialization is not a bounded string")
-    return serialized
-
-
-def _plugin_dependencies(nuke, nodes, add_file, max_files):
+def _plugin_dependencies(scene, add_file, cwd):
     directories = []
     runtime = []
-    try:
-        available = nuke.plugins(nuke.ALL | nuke.REGISTERED)
-        if not isinstance(available, list) or len(available) > max_files:
-            raise ValueError
-    except Exception:
-        available = []
-    for node_class in sorted({str(node.Class()) for node in nodes.values()}):
-        candidates = {Path(path) for path in available if Path(path).stem == node_class and Path(path).is_file()}
-        for node in nodes.values():
-            if node.Class() == node_class and callable(getattr(node, "filename", None)):
-                try:
-                    candidate = _find_plugin_file(nuke, node.filename())
-                except Exception:
-                    candidate = None
+    for node_class in sorted({node["class"] for node in scene.node_plugins}):
+        candidates = {
+            Path(cwd, path) for path in scene.plugins if Path(path).stem == node_class and Path(cwd, path).is_file()
+        }
+        for node in scene.node_plugins:
+            if node["class"] == node_class:
+                candidate = _find_plugin_file(scene, node["filename"], cwd)
                 if candidate:
                     candidates.add(candidate)
         source_scripts = [path for path in candidates if path.suffix.lower() in _SCRIPT_EXTENSIONS]
@@ -400,62 +443,50 @@ def _plugin_dependencies(nuke, nodes, add_file, max_files):
     return directories, runtime
 
 
-def _font_dependencies(nuke, nodes, add_file, rewrites, missing, unrewritten, plugin_directories):
-    for name, node in nodes.items():
-        for knob_name, knob in node.knobs().items():
-            if knob_name != "font" or knob.Class() not in ("FreeType_Knob", "Font_Knob"):
-                continue
-            identity = {"node": name, "class": str(node.Class()), "knob": knob_name}
-            serialized = _serialization(knob, nuke.OutputContext())
-            match = _FONT.fullmatch(serialized) if isinstance(serialized, str) and len(serialized) <= 8192 else None
-            if not match or knob.isAnimated() is not False or knob.hasExpression() is not False:
-                unrewritten.append(dict(identity, reason="unsupported_font_serialization"))
-                continue
-            source = _find_plugin_file(nuke, match.group(2).strip())
-            if source is None:
-                missing.append(dict(identity, path=match.group(2).strip()))
-                continue
-            relative = add_file(source, "font")
-            plugin_directories.append(posixpath.dirname(relative))
-            if _serialization(knob, None) != serialized:
-                unrewritten.append(dict(identity, reason="multiple_context_font"))
-                continue
-            # FreeType filenames use the font/plugin search path rather than File_Knob Tcl evaluation.
-            rewritten = match.group(1) + source.name + match.group(3)
-            if rewritten != serialized:
-                rewrites.append((knob, rewritten, True))
+def _font_dependencies(scene, add_file, rewrites, missing, unrewritten, plugin_directories, cwd):
+    for font in scene.fonts:
+        identity = {key: font[key] for key in ("node", "class", "knob")}
+        serialized = font["serialized"]
+        match = _FONT.fullmatch(serialized) if isinstance(serialized, str) and len(serialized) <= 8192 else None
+        if not match or not font["static"]:
+            unrewritten.append(dict(identity, reason="unsupported_font_serialization"))
+            continue
+        source = _find_plugin_file(scene, match.group(2).strip(), cwd)
+        if source is None:
+            missing.append(dict(identity, path=match.group(2).strip()))
+            continue
+        relative = add_file(source, "font")
+        plugin_directories.append(posixpath.dirname(relative))
+        if font["full_serialized"] != serialized:
+            unrewritten.append(dict(identity, reason="multiple_context_font"))
+            continue
+        # FreeType filenames use the font/plugin search path rather than File_Knob Tcl evaluation.
+        rewritten = match.group(1) + source.name + match.group(3)
+        if rewritten != serialized:
+            rewrites.append((identity, rewritten, True))
 
 
-def _find_plugin_file(nuke, filename):
+def _find_plugin_file(scene, filename, cwd):
     if not isinstance(filename, str) or not filename or len(filename) > 8192 or _expression(filename):
         return None
     candidate = Path(filename)
     if candidate.is_absolute() and candidate.is_file():
         return candidate.resolve()
-    try:
-        folders = nuke.pluginPath()
-    except Exception:
-        return None
-    if not isinstance(folders, list) or len(folders) > 1024:
-        return None
-    for folder in folders:
+    for folder in scene.plugin_paths:
         for child in ("", "fonts"):
-            candidate = Path(folder) / child / filename
+            candidate = Path(cwd, folder) / child / filename
             if candidate.is_file():
                 return candidate.resolve()
     return None
 
 
-def _resolve_source(nuke, path):
+def _resolve_source(scene, path, cwd):
     if Path(path).is_absolute():
         return path
-    try:
-        folder = nuke.root()["project_directory"].evaluate()
-    except Exception:
-        folder = ""
+    folder = scene.project_directory
     if not folder:
-        folder = str(Path(nuke.root().name()).parent)
-    return str(Path(folder) / path)
+        folder = str(Path(scene.original_script).parent)
+    return str(Path(cwd, folder, path))
 
 
 def _publish_directory(stage, target):

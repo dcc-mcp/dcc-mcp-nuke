@@ -215,6 +215,10 @@ requirements are reported explicitly. Live knob serialization, Root state and
 the original disk script are preserved; the async copy checks cancellation and
 never overwrites an existing target. `inspect_package` verifies the receipt and
 stored file sizes before handoff.
+Collection snapshots native references on Nuke's main thread and runs filesystem
+work on a worker, including dry runs. Unproven used-frame dependencies fail with
+the offending node, knob, path and reason; publication refuses a scene changed
+since its snapshot.
 
 Releases use a canonical tag and exact-main identity check, one digest-bound
 wheel/sdist bundle, and a minimal-OIDC publisher in `release.yaml` and the

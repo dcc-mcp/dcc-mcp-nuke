@@ -3,7 +3,7 @@ from __future__ import annotations
 from dcc_mcp_core.skill import skill_entry, skill_error, skill_success
 
 from dcc_mcp_nuke.file_references import FileReferenceError
-from dcc_mcp_nuke.script_package import package_script
+from dcc_mcp_nuke.script_package import PackageScriptError, package_script
 
 
 @skill_entry
@@ -34,6 +34,8 @@ def main(
             max_total_bytes=max_total_bytes,
             max_report_items=max_report_items,
         )
+    except PackageScriptError as exc:
+        return skill_error("Failed to collect Nuke script", str(exc), **exc.context)
     except FileReferenceError as exc:
         return skill_error("Failed to collect Nuke script", str(exc))
     except Exception:
