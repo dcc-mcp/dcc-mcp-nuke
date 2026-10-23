@@ -179,6 +179,16 @@ and animated knobs, and verify each write with whole-operation rollback on
 failure. Reference lists and folder searches are bounded; ambiguous relinks
 remain unchanged. These host-injected helpers also work in headless `nuke -t`.
 
+The `nuke-preview` skill renders one node/frame to a temporary RGB PNG with a
+bounded longest edge, file reference, source bounding box, and sampled channel
+statistics. Select an RGB layer or one exact channel for grayscale inspection;
+optional OCIO display/view names use the active config's enumerated lists.
+The tool restores frame, proxy mode, selection, dirty state, group context,
+and undo recording, and removes its temporary graph. Release each returned
+`preview_id` with `cleanup_preview` after reading the image. Up to eight
+previews (8 MiB each) live until cleanup or normal host exit; raw output clips
+to [0, 1] and does not claim parity with a custom Viewer process.
+
 Releases use a canonical tag and exact-main identity check, one digest-bound
 wheel/sdist bundle, and a minimal-OIDC publisher in `release.yaml` and the
 GitHub `pypi` environment. Immediately before publishing, the workflow force-refreshes

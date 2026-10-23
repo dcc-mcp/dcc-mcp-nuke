@@ -28,6 +28,9 @@ def test_bundled_contract_files_exist():
     assert package.joinpath("text_layout.py").exists()
     assert package.joinpath("skills", "nuke-text-layout", "tools.yaml").exists()
     assert package.joinpath("skills", "nuke-text-layout", "scripts", "upsert_text2_label.py").exists()
+    assert package.joinpath("preview.py").exists()
+    assert package.joinpath("skills", "nuke-preview", "tools.yaml").exists()
+    assert package.joinpath("skills", "nuke-preview", "scripts", "render_node_preview.py").exists()
     gizmo_scripts = package / "skills" / "nuke-node-assets" / "scripts"
     assert all(
         gizmo_scripts.joinpath(name).exists()
