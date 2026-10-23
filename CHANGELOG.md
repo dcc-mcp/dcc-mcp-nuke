@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.19.0](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.18.0...v0.19.0) (2026-10-23)
+
+
+### Features
+
+* add bounded AIR workflows and reliable UI control ([#98](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/98)) ([483884f](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/483884f81b85ef87b3512244367c40b6009b8717))
+
+
+### Bug Fixes
+
+* describe asynchronous AIR job receipts ([#101](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/101)) ([7fffad1](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/7fffad1f66566f55f7fd0e10d870e687bafffc00))
+
 ## [0.18.0](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.17.0...v0.18.0) (2026-10-23)
 
 
