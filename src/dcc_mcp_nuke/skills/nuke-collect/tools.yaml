@@ -1,0 +1,42 @@
+tools:
+  - name: package_script
+    description: Preview or collect the active Nuke script and bounded dependencies into a new folder or zip, with relative paths, verified restoration of the live script, and explicit missing/unrewritten/plugin reports. Long copies use the shared async job model; inspect_package verifies the finished package receipt.
+    input_schema:
+      type: object
+      required: [output_path]
+      additionalProperties: false
+      properties:
+        output_path: {type: string, minLength: 1, maxLength: 8192}
+        dry_run: {type: boolean, default: true}
+        frame_mode: {type: string, enum: [all, used], default: all}
+        first_frame: {type: integer, minimum: -1000000, maximum: 1000000}
+        last_frame: {type: integer, minimum: -1000000, maximum: 1000000}
+        max_references: {type: integer, minimum: 1, maximum: 1024, default: 1024}
+        max_files: {type: integer, minimum: 1, maximum: 100000, default: 10000}
+        max_total_bytes: {type: integer, minimum: 1, maximum: 1000000000000000, default: 1000000000000}
+        max_report_items: {type: integer, minimum: 1, maximum: 1024, default: 256}
+    read_only: false
+    destructive: false
+    idempotent: false
+    execution: async
+    affinity: main
+    timeout_hint_secs: 7200
+    source_file: scripts/package_script.py
+    next-tools:
+      on-success: [nuke_collect__inspect_package]
+  - name: inspect_package
+    description: Read a collected directory or zip receipt, verify safe relative names, script presence and every dependency's stored byte size, and return a bounded dependency report without executing package contents.
+    input_schema:
+      type: object
+      required: [output_path]
+      additionalProperties: false
+      properties:
+        output_path: {type: string, minLength: 1, maxLength: 8192}
+        max_report_items: {type: integer, minimum: 1, maximum: 1024, default: 256}
+    read_only: true
+    destructive: false
+    idempotent: true
+    execution: sync
+    affinity: main
+    timeout_hint_secs: 60
+    source_file: scripts/inspect_package.py
