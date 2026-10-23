@@ -21,8 +21,11 @@ Run `nuke_input_health__check_input_health` before rendering or packaging.
 The tool inspects the active script recursively without editing it. Reports
 are grouped by severity and frame lists are compressed into inclusive ranges.
 Sequence checks cover the union of Root and Read ranges, plus limited Write
-ranges when requested. Hold/loop/offset and time remapping are not simulated;
-range warnings indicate coverage, not a prediction of rendered pixels.
+ranges when requested. Static `hold`, `loop` and `bounce` modes extend coverage
+at their respective Read boundaries; those frames do not require additional
+files outside the source range. Gaps inside the source range are still checked.
+Unknown or animated boundary modes remain conservative. Frame offsets and
+time remapping are not simulated; coverage is not a prediction of rendered pixels.
 Read coverage is compared separately with Root and requested Write ranges.
 `max_references` also caps the returned limited Write ranges; total counts and
 an incomplete-check warning identify omissions. Frame unions are bounded before
