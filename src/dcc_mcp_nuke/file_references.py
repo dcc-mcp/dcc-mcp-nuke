@@ -28,7 +28,7 @@ class FileReferenceRuntimeError(FileReferenceError, RuntimeError):
 
 
 def list_file_references(nuke: Any, *, max_items: int = 256, node_classes: list[str] | None = None) -> dict[str, Any]:
-    """Inspect every File_Knob, including nodes nested inside groups and gizmos."""
+    """Inspect non-empty or dynamic File_Knobs recursively, including groups and gizmos."""
     records, count = _references(nuke, max_items, node_classes)
     return {
         "references": [record for record, _knob in records],
@@ -219,6 +219,13 @@ def _references(nuke, max_items, node_classes):
             for name, knob in sorted(node.knobs().items()):
                 if knob.Class() != "File_Knob":
                     continue
+                try:
+                    raw, expression, animated = _file_knob_state(knob)
+                except Exception:
+                    pass  # Unknown state remains visible and counts toward the bound.
+                else:
+                    if not raw and not expression and not animated:
+                        continue
                 count += 1
                 if count <= max_items:
                     records.append((_describe(node, node_class, name, knob), knob))
@@ -244,27 +251,8 @@ def _describe(node, node_class, name, knob):
     try:
         raw = _raw_value(knob)
         record["raw_value"] = raw
-        expression = knob.hasExpression()
-        animated = knob.isAnimated()
-        if not isinstance(expression, bool) or not isinstance(animated, bool):
-            raise ValueError
-        if animated:
-            # File_Knob marks ordinary frame sequences animated even without keyed paths.
-            key_count = knob.getNumKeys()
-            keys = knob.getKeyList()
-            if (
-                isinstance(key_count, bool)
-                or not isinstance(key_count, int)
-                or key_count < 0
-                or not isinstance(keys, (list, tuple))
-                or len(keys) != key_count
-                or any(
-                    isinstance(key, bool) or not isinstance(key, (int, float)) or not math.isfinite(key) for key in keys
-                )
-            ):
-                raise ValueError
-            animated = key_count > 0
-        record["expression"] = expression or _expression(raw)
+        _raw, expression, animated = _file_knob_state(knob, raw=raw)
+        record["expression"] = expression
         record["animated"] = animated
         if not raw:
             record["evaluated_path"] = ""
@@ -281,6 +269,31 @@ def _describe(node, node_class, name, knob):
     except Exception:
         record["error"] = "evaluation_failed"
     return record
+
+
+def _file_knob_state(knob, *, raw=None):
+    """Read bounded path/dynamic metadata without evaluating expressions or the filesystem."""
+    if raw is None:
+        raw = _raw_value(knob)
+    expression = knob.hasExpression()
+    animated = knob.isAnimated()
+    if not isinstance(expression, bool) or not isinstance(animated, bool):
+        raise ValueError
+    if animated:
+        # File_Knob marks ordinary frame sequences animated even without keyed paths.
+        key_count = knob.getNumKeys()
+        keys = knob.getKeyList()
+        if (
+            isinstance(key_count, bool)
+            or not isinstance(key_count, int)
+            or key_count < 0
+            or not isinstance(keys, (list, tuple))
+            or len(keys) != key_count
+            or any(isinstance(key, bool) or not isinstance(key, (int, float)) or not math.isfinite(key) for key in keys)
+        ):
+            raise ValueError
+        animated = key_count > 0
+    return raw, expression or _expression(raw), animated
 
 
 def _change_paths(nuke, propose, dry_run, node_classes, max_items, *, allow_relative=False):

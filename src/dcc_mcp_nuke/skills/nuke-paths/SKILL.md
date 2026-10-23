@@ -22,13 +22,18 @@ metadata:
 # Nuke File Paths
 
 Start with `list_file_references`. It searches from Root recursively, including
-groups and gizmos, and reports every `File_Knob` by full node name, class, knob,
+groups and gizmos, and reports each retained `File_Knob` by full node name, class, knob,
 raw value, evaluated path, existence, expression/animation state, and a bounded
 error status. Evaluation uses Nuke's current output context and can evaluate
 existing Tcl or Python expressions in the script. Existence means a concrete
 file or at least one frame of a printf/hash sequence exists; it does not certify
 all frames. Read, DeepRead, geometry, camera, LUT, and custom file knobs use the
 same discovery path.
+
+Empty knobs such as unused `icon` and Read `proxy` are omitted only when their
+expression and keyed-animation state are known to be false. `reference_count`,
+`max_items`, and truncation count the retained paths, including dynamic or
+unreadable empty values. Exceeding the limit does not evaluate further paths.
 
 All editing tools default to `dry_run: true`. Review the reported `new_value`
 and status, repeat with `dry_run: false`, then inspect again. Edits verify each
@@ -51,8 +56,8 @@ saves the script. A truncated reference scan refuses editing.
   `max_search_files` refuses the operation so a partial search cannot appear
   unambiguous.
 
-Other expression-bearing, animated, unreadable, and empty knobs are reported
-and left intact. Prefixes and replacement paths reject Tcl substitutions and
+Other expression-bearing, animated, and unreadable knobs remain reported and
+are left intact, including empty values with those states. Prefixes and replacement paths reject Tcl substitutions and
 control characters. Lists, search work, and candidate reports have explicit
 limits. The same host-injected Python helpers work in `nuke -t` without a GUI;
 batch callers should open each `.nk`, preview, apply, inspect, then explicitly
