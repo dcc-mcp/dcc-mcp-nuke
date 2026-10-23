@@ -1,6 +1,6 @@
 tools:
   - name: list_file_references
-    description: Inspect every File_Knob from Root recursively, returning bounded raw/evaluated paths, existence, expression and animation states; evaluates existing script expressions in the current output context.
+    description: Inspect File_Knob paths from Root recursively, omitting only known static empty values before applying max_items; return raw/evaluated paths, existence and dynamic states, retaining unreadable or dynamic empty values. Evaluates retained script expressions in the current output context.
     input_schema:
       type: object
       additionalProperties: false

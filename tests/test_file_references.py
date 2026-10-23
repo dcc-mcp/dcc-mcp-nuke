@@ -167,16 +167,97 @@ def test_sequence_existence_does_not_depend_on_nukes_evaluated_current_frame(tmp
     assert reference_path(reference) == (tmp_path / Path(raw).name).as_posix()
 
 
-def test_empty_file_knobs_do_not_require_a_string_from_nuke_evaluate():
+def test_static_empty_file_knobs_are_omitted_without_evaluation():
     class EmptyKnob(FakeKnob):
         def evaluate(self):
-            return None
+            pytest.fail("static empty knobs must not be evaluated")
 
     result = list_file_references(FakeNuke([FakeNode("Read1", {"proxy": EmptyKnob("")})]))
-    reference = result["references"][0]
-    assert reference["raw_value"] == reference["evaluated_path"] == ""
-    assert reference["exists"] is False
-    assert reference["error"] is None
+    assert result == {"references": [], "reference_count": 0, "truncated": False}
+
+
+def _ordinary_comp():
+    nodes = []
+    for index in range(220):
+        knobs = {"icon": FakeKnob("")}
+        if index < 24:
+            node_class = "Read" if index < 21 else "Write"
+            knobs["file"] = FakeKnob(f"/old/ref-{index:02d}.exr")
+            if node_class == "Read":
+                knobs["proxy"] = FakeKnob("")
+        else:
+            node_class = "Blur"
+        nodes.append(FakeNode(f"{node_class}{index}", knobs, node_class))
+    return FakeNuke(nodes, script="/old/comp.nk")
+
+
+def test_ordinary_comp_limit_counts_paths_instead_of_empty_icon_and_proxy_knobs():
+    result = list_file_references(_ordinary_comp())
+    assert result["reference_count"] == len(result["references"]) == 24
+    assert result["truncated"] is False
+    assert all(record["knob"] == "file" for record in result["references"])
+
+
+@pytest.mark.parametrize("operation", ["remap", "convert", "relink"])
+@pytest.mark.parametrize("dry_run", [True, False])
+@pytest.mark.parametrize("node_classes", [None, ["Read", "Write"]])
+def test_path_mutators_ignore_empty_knobs_with_a_real_path_limit(tmp_path, operation, dry_run, node_classes):
+    nuke = _ordinary_comp()
+    options = {"dry_run": dry_run, "max_items": 24, "node_classes": node_classes}
+    if operation == "remap":
+        result = remap_path_prefixes(nuke, _mappings(), **options)
+    elif operation == "convert":
+        result = convert_file_paths(nuke, "relative", **options)
+    else:
+        for index in range(24):
+            (tmp_path / f"ref-{index:02d}.exr").touch()
+        result = relink_missing_files(nuke, [str(tmp_path)], **options)
+    assert result["reference_count"] == result["change_count"] == 24
+    assert result["truncated"] is False
+    for node in nuke.nodes:
+        for name, knob in node.knobs().items():
+            assert len(knob.writes) == (1 if name == "file" and not dry_run else 0)
+
+
+@pytest.mark.parametrize(
+    "kwargs,status",
+    [({"expression": True}, "expression"), ({"animated": True}, "animated"), ({"animated": "unknown"}, "unreadable")],
+)
+def test_empty_dynamic_or_unknown_file_knobs_remain_visible_and_unchanged(kwargs, status):
+    knob = FakeKnob("", **kwargs)
+    nuke = FakeNuke([FakeNode("Read1", {"file": knob})])
+    listed = list_file_references(nuke, max_items=1)
+    assert listed["reference_count"] == len(listed["references"]) == 1
+    result = remap_path_prefixes(nuke, _mappings(), max_items=1, dry_run=False)
+    assert result["references"][0]["status"] == status
+    assert not knob.writes
+
+
+def test_empty_file_knob_with_unreadable_dynamic_state_remains_reported():
+    class BrokenEmptyKnob(FakeKnob):
+        def hasExpression(self):
+            raise RuntimeError("secret host details")
+
+    result = list_file_references(FakeNuke([FakeNode("Read1", {"proxy": BrokenEmptyKnob("")})]))
+    assert result["reference_count"] == len(result["references"]) == 1
+    assert result["references"][0]["raw_value"] == ""
+    assert result["references"][0]["error"] == "unreadable_file_knob"
+    assert "secret" not in str(result)
+
+
+def test_references_past_the_report_limit_are_not_evaluated():
+    class UnobservedKnob(FakeKnob):
+        def evaluate(self):
+            pytest.fail("out-of-limit file expressions must not be evaluated")
+
+    nuke = FakeNuke(
+        [
+            FakeNode("Read1", {"file": FakeKnob("/a.exr")}),
+            FakeNode("Read2", {"file": UnobservedKnob("[python arbitrary()]")}),
+        ]
+    )
+    result = list_file_references(nuke, max_items=1)
+    assert result["reference_count"] == 2 and result["truncated"] is True
 
 
 def test_implicit_sequence_animation_flag_does_not_block_static_path_edits(tmp_path):
