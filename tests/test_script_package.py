@@ -281,6 +281,36 @@ def test_expression_animated_missing_and_unsupported_fonts_are_explicit(tmp_path
     assert result["rewrite_count"] == 0
 
 
+def test_node_label_fonts_are_not_render_dependencies(tmp_path):
+    nuke = _nuke(tmp_path)
+    nuke.nodes = [Node("Read1", {"note_font": Knob("Helvetica", "Font_Knob")})]
+    result = package_script(nuke, str(tmp_path / "package"))
+    assert result["unrewritten_count"] == result["missing_count"] == result["files_count"] == 0
+
+
+def test_derived_root_ocio_path_is_never_touched_but_custom_config_is_collected(tmp_path):
+    class ReadOnlyDerivedKnob(Knob):
+        def setValue(self, value):
+            raise ValueError("read only variable")
+
+        def fromScript(self, value):
+            raise ValueError("read only variable")
+
+    config = _source(tmp_path, "config.ocio", b"ocio")
+    derived = ReadOnlyDerivedKnob(str(config))
+    custom = Knob(str(config))
+    nuke = _nuke(tmp_path, root_knobs={"OCIOConfigPath": derived, "customOCIOConfigPath": custom})
+    result = package_script(nuke, str(tmp_path / "package"), dry_run=False)
+    assert result["verified"] is True
+    assert result["files_count"] == 1
+    assert {item["reason"] for item in result["unrewritten"]} == {
+        "host_managed_ocio_config",
+        "ocio_dependent_luts_not_resolved",
+    }
+    assert not derived.writes
+    assert custom.raw == str(config)
+
+
 def test_outputs_are_redirected_in_copied_script_without_copying_existing_renders(tmp_path):
     render = _source(tmp_path, "renders/output.exr", b"render")
     nuke = _nuke(tmp_path)

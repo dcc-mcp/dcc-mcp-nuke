@@ -115,6 +115,10 @@ def package_script(
             if record["error"]:
                 unrewritten.append(dict(identity, reason="unreadable"))
             continue
+        if record["class"] == "Root" and record["knob"] == "OCIOConfigPath":
+            # Nuke derives this read-only value even when enabled()/READ_ONLY report it writable.
+            unrewritten.append(dict(identity, reason="host_managed_ocio_config"))
+            continue
         if record["class"] in _OUTPUT_CLASSES:
             if record["expression"] or record["animated"] or record["error"]:
                 unrewritten.append(dict(identity, reason="dynamic_output"))
@@ -382,7 +386,7 @@ def _plugin_dependencies(nuke, nodes, add_file, max_files):
 def _font_dependencies(nuke, nodes, add_file, rewrites, missing, unrewritten, plugin_directories):
     for name, node in nodes.items():
         for knob_name, knob in node.knobs().items():
-            if knob.Class() not in ("FreeType_Knob", "Font_Knob"):
+            if knob_name != "font" or knob.Class() not in ("FreeType_Knob", "Font_Knob"):
                 continue
             identity = {"node": name, "class": str(node.Class()), "knob": knob_name}
             serialized = knob.toScript()

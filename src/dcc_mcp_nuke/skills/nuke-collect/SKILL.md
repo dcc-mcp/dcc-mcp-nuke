@@ -44,7 +44,9 @@ Disconnected sequences may require `all` mode. Write destinations are changed
 only in the copied script to a package-local `renders` directory.
 
 File discovery reuses `nuke-paths` and includes Root file knobs for custom OCIO
-configs. The layout is `script.nk`, `manifest.json`, `README.txt`, and
+configs. Nuke's derived, read-only Root `OCIOConfigPath` is reported as
+`host_managed_ocio_config` and is never edited; custom config path knobs remain
+collectable. The layout is `script.nk`, `manifest.json`, `README.txt`, and
 `assets/<source-directory-id>/<filename>`. Preserving source basenames and
 grouping files by source directory avoids common collisions and preserves
 sequence tokens. The manifest lists complete bounded contents; returned arrays
