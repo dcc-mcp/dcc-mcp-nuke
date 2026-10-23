@@ -16,6 +16,11 @@ def main(path: str, discard_unsaved_changes: bool = False, **_kwargs):
         return skill_error("Invalid Nuke script path", "script does not exist")
     if not target.is_file():
         return skill_error("Invalid Nuke script path", "script path is not a file")
+    if target.with_name(target.name + ".autosave").exists():
+        return skill_error(
+            "Failed to open Nuke script",
+            "an autosave recovery file exists; resolve it in Nuke before opening the script",
+        )
 
     import nuke  # Lazy import: requires Nuke.
 

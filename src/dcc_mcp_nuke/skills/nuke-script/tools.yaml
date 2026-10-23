@@ -1,6 +1,6 @@
 tools:
   - name: open_script
-    description: Open an existing absolute .nk path and verify the loaded Root and graph.
+    description: Open an existing absolute .nk path and verify the loaded Root and graph. Refuse an adjacent .autosave recovery file before clearing the graph to avoid a modal recovery prompt.
     input_schema:
       type: object
       required: [path]

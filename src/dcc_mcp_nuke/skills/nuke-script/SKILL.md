@@ -27,6 +27,10 @@ Use `nuke_script__open_script` to restore an existing absolute `.nk` path. The
 tool verifies the active script path, Root frame range, and loaded node count
 before reporting success. Opening replaces the current graph, so save any
 unsaved work first or explicitly set `discard_unsaved_changes` to `true`.
+An adjacent `<script>.nk.autosave` recovery file is rejected before the graph
+is cleared, even when discarding unsaved changes. Resolve recovery in Nuke
+first; the tool never deletes or silently chooses an autosave. Custom host
+callbacks can still show dialogs during open, new, or save operations.
 
 Use `nuke_script__new_script` to clear the graph and start a fresh script,
 optionally applying Root frame range, fps, and format in the same call. It

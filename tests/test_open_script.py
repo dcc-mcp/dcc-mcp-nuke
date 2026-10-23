@@ -1,8 +1,11 @@
 import importlib.util
+import os
 import sys
 from pathlib import Path
 from types import ModuleType
 from unittest.mock import MagicMock
+
+import pytest
 
 
 def _load_open_module():
@@ -123,3 +126,25 @@ def test_open_script_replaces_unsaved_graph_when_discard_is_explicit(tmp_path, m
     assert result["success"] is True
     nuke.scriptClear.assert_called_once_with()
     nuke.scriptOpen.assert_called_once_with(str(target.resolve()))
+
+
+@pytest.mark.parametrize("autosave_age", [-60, 0, 60])
+def test_open_script_rejects_recovery_before_discarding_graph(tmp_path, monkeypatch, autosave_age):
+    module = _load_open_module()
+    target = tmp_path / "requested.nk"
+    target.write_text("Root {}", encoding="utf-8")
+    autosave = target.with_name(target.name + ".autosave")
+    autosave.write_text("Root { label recovered }", encoding="utf-8")
+    timestamp = target.stat().st_mtime + autosave_age
+    os.utime(autosave, (timestamp, timestamp))
+    nuke = _fake_nuke(target, modified=True)
+    monkeypatch.setitem(sys.modules, "nuke", nuke)
+
+    result = module.main.__wrapped__(str(target), discard_unsaved_changes=True)
+
+    assert result["success"] is False
+    assert "autosave recovery file exists" in result["error"]
+    assert "resolve it in Nuke" in result["error"]
+    nuke.scriptClear.assert_not_called()
+    nuke.scriptOpen.assert_not_called()
+    assert autosave.read_text(encoding="utf-8") == "Root { label recovered }"
