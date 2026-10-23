@@ -239,3 +239,12 @@ def test_animated_concrete_path_reports_current_frame_only(tmp_path):
     result = check_input_health(Nuke([node]))
     assert _codes(result, "warning")["animated_path_current_frame_only"]["node"] == "AnimatedRead"
     assert not result["issues"]["error"]
+
+
+def test_truncated_deep_node_identity_is_reported_without_aborting():
+    node = Node("NestedGroup." * 30 + "Read", file="missing.exr")
+    result = check_input_health(Nuke([node]))
+    warning = _codes(result, "warning")["node_identity_unavailable"]
+    assert warning["node"] == node.fullName()[:256]
+    assert result["checked_references"] == 1
+    assert not result["issues"]["error"]

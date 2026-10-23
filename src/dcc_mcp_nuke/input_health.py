@@ -105,7 +105,10 @@ def check_input_health(
             continue
         if not reference["raw_value"]:
             continue
-        node = by_name[name]
+        node = by_name.get(name)
+        if node is None:
+            report("warning", "node_identity_unavailable", name, **detail)
+            continue
         node_range = _range(node, "first", "last")
         if node_range and (node_range[0] > root_range[0] or node_range[1] < root_range[1]):
             report(
