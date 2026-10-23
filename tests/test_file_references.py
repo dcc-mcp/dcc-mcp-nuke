@@ -13,6 +13,7 @@ from dcc_mcp_nuke.file_references import (
     convert_file_paths,
     list_file_references,
     path_exists,
+    reference_path,
     relink_missing_files,
     remap_path_prefixes,
     sequence_files,
@@ -147,6 +148,29 @@ def test_unreadable_expression_is_reported_without_host_details():
     assert result["references"][0]["error"] == "evaluation_failed"
     assert result["references"][0]["exists"] is None
     assert "secret" not in str(result)
+
+
+@pytest.mark.parametrize("raw", ["plate.%04d.exr", "[value root.project_directory]/plate.####.exr"])
+def test_sequence_existence_does_not_depend_on_nukes_evaluated_current_frame(tmp_path, raw):
+    (tmp_path / "plate.0001.exr").touch()
+    knob = FakeKnob(raw, evaluated=str(tmp_path / "plate.0000.exr"))
+    result = list_file_references(FakeNuke([FakeNode("Read1", {"file": knob})]))
+    reference = result["references"][0]
+    assert reference["evaluated_path"] == str(tmp_path / "plate.0000.exr")
+    assert reference["exists"] is True
+    assert reference_path(reference) == (tmp_path / Path(raw).name).as_posix()
+
+
+def test_empty_file_knobs_do_not_require_a_string_from_nuke_evaluate():
+    class EmptyKnob(FakeKnob):
+        def evaluate(self):
+            return None
+
+    result = list_file_references(FakeNuke([FakeNode("Read1", {"proxy": EmptyKnob("")})]))
+    reference = result["references"][0]
+    assert reference["raw_value"] == reference["evaluated_path"] == ""
+    assert reference["exists"] is False
+    assert reference["error"] is None
 
 
 @pytest.mark.parametrize("token", ["%04d", "%4d", "####", "%d"])

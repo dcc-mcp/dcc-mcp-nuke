@@ -47,6 +47,16 @@ def path_exists(path: str) -> bool:
     return bool(sequence_files(path, max_files=100000))
 
 
+def reference_path(reference: dict[str, Any]) -> str:
+    """Keep sequence tokens while using Nuke's evaluated directory substitutions."""
+    raw = (reference.get("raw_value") or "").replace("\\", "/")
+    evaluated = (reference.get("evaluated_path") or raw).replace("\\", "/")
+    basename = posixpath.basename(raw)
+    if _SEQUENCE.search(basename) and not _expression(basename):
+        return posixpath.join(posixpath.dirname(evaluated), basename)
+    return evaluated
+
+
 def sequence_files(path: str, *, max_files: int = 10000) -> list[str]:
     """Resolve concrete/printf/hash paths with a cap on inspected directory entries."""
     _bounded_int("max_files", max_files, 1, 100000)
@@ -239,6 +249,10 @@ def _describe(node, node_class, name, knob):
             raise ValueError
         record["expression"] = expression or _expression(raw)
         record["animated"] = animated
+        if not raw:
+            record["evaluated_path"] = ""
+            record["exists"] = False
+            return record
     except Exception:
         record["error"] = "unreadable_file_knob"
     try:
@@ -246,7 +260,7 @@ def _describe(node, node_class, name, knob):
         if not isinstance(evaluated, str) or len(evaluated) > _MAX_PATH:
             raise ValueError
         record["evaluated_path"] = evaluated
-        record["exists"] = path_exists(evaluated)
+        record["exists"] = path_exists(reference_path(record))
     except Exception:
         record["error"] = "evaluation_failed"
     return record
