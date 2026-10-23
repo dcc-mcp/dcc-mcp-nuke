@@ -88,7 +88,8 @@ def _gizmo_host(monkeypatch, instance, *, existing=(), create_error=None):
     graph = list(existing)
     nuke = ModuleType("nuke")
     nuke.pluginAddPath = MagicMock()
-    nuke.load = MagicMock()
+    # Native nuke.load(.gizmo) evaluates the file and inserts a generic Gizmo.
+    nuke.load = MagicMock(side_effect=lambda _name: graph.append(_Node("LoadedGizmo", "Gizmo")))
     nuke.allNodes = MagicMock(side_effect=lambda **_kwargs: list(graph))
 
     def create_node(_node_class, **_kwargs):
@@ -224,7 +225,7 @@ def test_instantiate_gizmo_loads_asset_and_applies_exposed_knobs(tmp_path, monke
         "applied_knobs": ["bloom_gain"],
     }
     nuke.pluginAddPath.assert_called_once_with(str(tmp_path.resolve()))
-    nuke.load.assert_called_once_with("SolarBloom")
+    nuke.load.assert_not_called()
     nuke.createNode.assert_called_once_with("SolarBloom", inpanel=False)
     instance.setName.assert_called_once_with("ShotBloom", uncollide=False)
     assert instance.knob("bloom_gain").value() == 1.4

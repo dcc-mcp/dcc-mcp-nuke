@@ -28,8 +28,8 @@ python tools/verify_distribution.py dist --core-version 0.20.14
 
 | Path | Role |
 |---|---|
-| `src/dcc_mcp_nuke/` | Adapter package — `server.py`, `dispatcher.py`, `node_graph.py`, `compositing.py`, `gizmos.py`, `scripting.py`, `text_layout.py`, `host_flavor.py`, `_installer.py`, `install_cli.py`, `plugin.py`, `__version__.py` |
-| `src/dcc_mcp_nuke/skills/` | 8 shipped skills (`nuke-diagnostics`, `-layered-compositing`, `-node-assets`, `-node-graph`, `-script`, `-scripting`, `-studio-timeline`, `-text-layout`); shipped as wheel artifacts |
+| `src/dcc_mcp_nuke/` | Adapter package — host/server dispatch, node graph and layout, compositing, `gizmos.py`, `plugins.py`, file references, previews, input health, script packaging, scripting, text layout, host flavors and installation |
+| `src/dcc_mcp_nuke/skills/` | Shipped domain skills, including `nuke-node-graph`, `nuke-node-assets`, `nuke-plugins`, `nuke-paths`, `nuke-preview`, `nuke-input-health` and `nuke-collect`; each skill's `SKILL.md` and `tools.yaml` define its surface and ship in the wheel |
 | `src/dcc_mcp_nuke/nuke_plugin/` | In-host Nuke plug-in (`init.py`, `menu.py`); shipped as wheel artifacts |
 | `tests/` | pytest suite (`testpaths = ["tests"]`, `pythonpath = ["src"]`) |
 | `tools/` | `lint_skills.py`, `verify_distribution.py`, `release_integrity.py`, `skill_companion_audit.py` |

@@ -67,7 +67,9 @@ Do not run an archive's installer, `init.py`, or `menu.py` as a download step.
 4. Connect inputs using `nuke-node-graph.connect_input`; inspect exposed knobs
    before setting them. Reuse the existing typed graph tools for already
    registered third-party node classes.
-5. Use `nuke-preview.render_node_preview` on a small known input and verify
+5. Read back the graph delta: only the requested instance and its internal
+   nodes should be new. Repeated creation must not leave an extra load-created
+   instance. Use `nuke-preview.render_node_preview` on a small known input and verify
    channel statistics/render output. For the example above, a Constant input
    with RGB `[0.25, 0.5, 0.75]` and default `size=0` retained those RGB values.
    This is a Nuke 16.1v2 sample qualification, not Nuke 17 qualification.

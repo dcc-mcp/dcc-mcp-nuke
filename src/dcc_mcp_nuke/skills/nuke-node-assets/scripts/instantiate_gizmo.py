@@ -38,7 +38,6 @@ def main(gizmo_path, node_name=None, knob_values=None, **_kwargs):
     node = None
     try:
         nuke.pluginAddPath(str(target.parent))
-        nuke.load(asset_name)
         node = create_node_handle(nuke, asset_name, name=node_name)
 
         missing = [name for name in values if node.knob(name) is None]
