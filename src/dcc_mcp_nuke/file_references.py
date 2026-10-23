@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import ntpath
 import os
 import posixpath
@@ -247,6 +248,22 @@ def _describe(node, node_class, name, knob):
         animated = knob.isAnimated()
         if not isinstance(expression, bool) or not isinstance(animated, bool):
             raise ValueError
+        if animated:
+            # File_Knob marks ordinary frame sequences animated even without keyed paths.
+            key_count = knob.getNumKeys()
+            keys = knob.getKeyList()
+            if (
+                isinstance(key_count, bool)
+                or not isinstance(key_count, int)
+                or key_count < 0
+                or not isinstance(keys, (list, tuple))
+                or len(keys) != key_count
+                or any(
+                    isinstance(key, bool) or not isinstance(key, (int, float)) or not math.isfinite(key) for key in keys
+                )
+            ):
+                raise ValueError
+            animated = key_count > 0
         record["expression"] = expression or _expression(raw)
         record["animated"] = animated
         if not raw:

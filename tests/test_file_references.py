@@ -50,6 +50,12 @@ class FakeKnob:
     def hasExpression(self):
         return self.expression
 
+    def getNumKeys(self):
+        return 1 if self.animated else 0
+
+    def getKeyList(self):
+        return [1.0] if self.animated else []
+
     def setValue(self, value):
         self.writes.append(value)
         if value not in self.reject:
@@ -171,6 +177,35 @@ def test_empty_file_knobs_do_not_require_a_string_from_nuke_evaluate():
     assert reference["raw_value"] == reference["evaluated_path"] == ""
     assert reference["exists"] is False
     assert reference["error"] is None
+
+
+def test_implicit_sequence_animation_flag_does_not_block_static_path_edits(tmp_path):
+    class SequenceKnob(FakeKnob):
+        def getNumKeys(self):
+            return 0
+
+        def getKeyList(self):
+            return []
+
+    (tmp_path / "plate.0001.exr").touch()
+    knob = SequenceKnob(str(tmp_path / "plate.%04d.exr"), animated=True)
+    nuke = FakeNuke([FakeNode("Read1", {"file": knob})])
+    reference = list_file_references(nuke)["references"][0]
+    assert reference["animated"] is False
+    assert reference["error"] is None
+    result = remap_path_prefixes(nuke, _mappings(str(tmp_path), "/new"), dry_run=False)
+    assert result["change_count"] == 1
+    assert knob.raw == "/new/plate.%04d.exr"
+
+
+@pytest.mark.parametrize("count,keys", [(True, []), (-1, []), (0, None), (1, []), (1, [float("nan")]), (1, [True])])
+def test_unobservable_or_malformed_file_key_state_is_not_editable(count, keys):
+    knob = FakeKnob("/old/plate.%04d.exr", animated=True)
+    knob.getNumKeys = lambda: count
+    knob.getKeyList = lambda: keys
+    result = remap_path_prefixes(FakeNuke([FakeNode("Read1", {"file": knob})]), _mappings(), dry_run=False)
+    assert result["references"][0]["status"] == "unreadable"
+    assert not knob.writes
 
 
 @pytest.mark.parametrize("token", ["%04d", "%4d", "####", "%d"])
