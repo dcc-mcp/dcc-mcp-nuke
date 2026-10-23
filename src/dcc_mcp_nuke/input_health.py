@@ -243,7 +243,7 @@ def _extends_range(node, side):
     if knob is None:
         return False
     try:
-        return not knob.hasExpression() and not knob.isAnimated() and knob.value() in ("hold", "loop", "bounce")
+        return knob.hasExpression() is False and knob.isAnimated() is False and knob.value() in ("hold", "loop", "bounce")
     except Exception:
         return False
 

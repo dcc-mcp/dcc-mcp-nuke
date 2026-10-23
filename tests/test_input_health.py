@@ -297,10 +297,11 @@ def test_hold_does_not_hide_missing_frames_inside_the_read_range(tmp_path):
 
 
 @pytest.mark.parametrize("dynamic", ["hasExpression", "isAnimated"])
-def test_dynamic_boundary_modes_cannot_prove_coverage(tmp_path, dynamic):
+@pytest.mark.parametrize("state", [True, None, 0])
+def test_dynamic_or_unknown_boundary_modes_cannot_prove_coverage(tmp_path, dynamic, state):
     image = tmp_path / "still.png"
     image.write_bytes(b"image")
     read = Node("Read", file=str(image), first=1, last=1, before="hold", after="hold")
-    setattr(read.knobs()["after"], dynamic, lambda: True)
+    setattr(read.knobs()["after"], dynamic, lambda: state)
     result = check_input_health(Nuke([read], first=101, last=200))
     assert "range_mismatch" in _codes(result, "warning")
