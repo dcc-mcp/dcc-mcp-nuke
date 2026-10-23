@@ -1,11 +1,10 @@
 """Host flavor detection and capability gating for Nuke, NukeX, and Nuke Studio.
 
-Nuke, NukeX, and Nuke Studio ship from one Foundry installation and share one
-embedded Python interpreter and one ``~/.nuke`` plug-in profile. Core already
-models them as executable stems of a single ``dcc_kind`` (``nuke``), so this
-adapter stays one package with one ``dcc_type``. What *does* differ between the
-three entry points is the feature surface available at runtime: only Nuke Studio
-exposes the Hiero timeline, sequence, project bin, and conform APIs.
+The supported Nuke, NukeX and Nuke Studio contexts share one adapter package
+and ``dcc_type``. Different processes and versions have separate interpreters,
+startup and license constraints. Standalone Hiero is not yet qualified by this
+adapter. Flavor capability labels describe expected host domains, not implemented
+operations, license entitlement or successful native verification.
 
 This module turns that difference into a first-class, testable contract:
 

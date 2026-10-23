@@ -31,7 +31,7 @@ tools:
   - name: host_flavor
     description: >-
       Report the running Nuke entry point (nuke, nukex, or nukestudio) and the
-      capability surface it provides. Read-only; use it to decide whether
+      declared host surface plus non-authorizing runtime API observations. Read-only; use it to assess whether
       Studio-only skills can load before calling `load_skill`.
     input_schema:
       type: object
@@ -53,6 +53,26 @@ tools:
         capabilities:
           type: array
           items: {type: string}
+        capabilities_semantics: {type: string}
+        runtime_evidence:
+          type: object
+          description: Loaded-module attribute observations only; never grants execution permission.
+          required: [scope, surfaces, license_status, native_verification, authorizes_execution]
+          properties:
+            scope: {type: string, const: already_loaded_module_attributes_only}
+            license_status: {type: string, const: unknown}
+            native_verification: {type: string, const: not_performed}
+            authorizes_execution: {type: boolean, const: false}
+            surfaces:
+              type: object
+              additionalProperties:
+                type: object
+                required: [module, state, callable_attributes, unobserved_attributes]
+                properties:
+                  module: {type: string}
+                  state: {type: string, enum: [not_loaded, observed, incomplete]}
+                  callable_attributes: {type: array, items: {type: string}}
+                  unobserved_attributes: {type: array, items: {type: string}}
         studio_capabilities:
           type: array
           items: {type: string}

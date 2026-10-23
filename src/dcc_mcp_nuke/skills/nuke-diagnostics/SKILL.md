@@ -25,10 +25,16 @@ Nuke's main thread and read its host version. It does not mutate the current
 script or expose a scripting fallback.
 
 Use `nuke_diagnostics__host_flavor` to report which Nuke entry point is
-running: `nuke`, `nukex`, or `nukestudio`. The result carries the capability
-set that entry point provides, so an agent can decide whether Studio-only
-skills such as `nuke-studio-timeline` are available before loading them. The
-three entry points share one package, one `dcc_type` (`nuke`), and one
-`~/.nuke` plug-in profile; only the advertised capability surface differs.
+running: `nuke`, `nukex`, or `nukestudio`. Legacy capability fields are declared
+host domains, not the implemented tool inventory. `runtime_evidence` separately
+observes callable attributes on already loaded modules without invoking them.
+A module not loaded is unknown. API presence is not successful execution or a
+license entitlement: `license_status` remains `unknown`, native verification is
+`not_performed`, and the report never authorizes execution or widens load gates.
+
+The supported entry points use one adapter distribution and `dcc_type` (`nuke`),
+but distinct processes/versions can have different Python, Qt, startup and license
+constraints. Standalone Hiero bootstrap is not yet supported. Select the intended
+live instance, inspect the shipped tool schema and respect the host-flavor gate.
 
 Both probes are read-only. Neither mutates the script nor starts a server.

@@ -37,13 +37,17 @@ python tools/verify_distribution.py dist --core-version 0.20.14
 
 ## Host flavors
 
-Nuke, NukeX, and Nuke Studio ship from one installation, share one embedded Python interpreter and one `~/.nuke` plug-in profile, and install once. Core registers all three as executable stems of a **single `dcc-type` (`nuke`)** — there is no second package, entry point, or release channel.
+Use one distribution and `dcc-type` (`nuke`) for supported Nuke, NukeX and
+Nuke Studio contexts. Do not split installation/release identity by workspace.
+Standalone Hiero bootstrap remains unimplemented. Processes, host versions,
+Python/Qt bindings and licenses must be qualified independently, not treated as
+one shared interpreter or identical capability set.
 
-What differs is the runtime feature surface. `host_flavor.py` classifies the running entry point and reports it as server capability metadata:
-
-```bash
-dcc-mcp-cli call nuke_diagnostics__host_flavor --dcc-type nuke --json '{}'
-```
+`host_flavor.py` retains the existing flavor/load gate. Diagnostic `capabilities`
+are legacy declared domains, not a complete implemented-tool list. The additive
+`runtime_evidence` field only observes already loaded module attributes and never
+grants execution or license rights. Consult shipped manifests and
+[the capability matrix](docs/family-capabilities.md) before claiming coverage.
 
 ## Release
 
