@@ -1,0 +1,36 @@
+tools:
+  - name: render_node_preview
+    description: Render one node/frame to a bounded temporary RGB PNG file reference with source bbox and sampled channel statistics; restore script state and release the image with cleanup_preview.
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [node_name]
+      properties:
+        node_name: {type: string, minLength: 1, description: Exact image node name, including enclosing Groups.}
+        frame: {type: integer, description: Frame to render; defaults to the current frame.}
+        max_size: {type: integer, minimum: 16, maximum: 1024, default: 512}
+        channels: {type: string, minLength: 1, default: rgba, description: RGB layer or exact channel rendered as grayscale.}
+        display: {type: string, minLength: 1, description: Optional OCIO display; requires view.}
+        view: {type: string, minLength: 1, description: Optional OCIO view; requires display.}
+    read_only: true
+    destructive: false
+    idempotent: false
+    execution: sync
+    affinity: main
+    timeout_hint_secs: 120
+    source_file: scripts/render_node_preview.py
+  - name: cleanup_preview
+    description: Remove one temporary node-preview PNG owned by this Nuke process using its opaque preview_id.
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [preview_id]
+      properties:
+        preview_id: {type: string, minLength: 32, maxLength: 32}
+    read_only: false
+    destructive: false
+    idempotent: false
+    execution: sync
+    affinity: main
+    timeout_hint_secs: 15
+    source_file: scripts/cleanup_preview.py
