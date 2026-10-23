@@ -108,6 +108,75 @@ def delete_node(nuke: Any, node_name: str) -> dict[str, Any]:
     return delete_node_handle(nuke, node)
 
 
+def auto_layout_nodes(nuke: Any, node_names: list[str]) -> dict[str, Any]:
+    """Autoplace exact nodes in one Group, restoring the graph on failure."""
+    if not isinstance(node_names, list) or not 1 <= len(node_names) <= 256:
+        raise ValueError("node_names must contain between 1 and 256 exact node names")
+    for name in node_names:
+        _validate_identifier("node_names item", name)
+    if len(set(node_names)) != len(node_names):
+        raise ValueError("node_names must not contain duplicates")
+
+    root = nuke.root()
+    with root:
+        before = _layout_snapshot(nuke)
+        targets = [_require_node(nuke, name) for name in node_names]
+        if any(name not in before or before[name]["node"] != node for name, node in zip(node_names, targets)):
+            raise ValueError("node_names must use exact full names from the graph listing")
+        parent = _layout_parent(targets[0])
+        if any(_layout_parent(node) != parent for node in targets):
+            raise ValueError("auto-layout nodes must share the same parent Group")
+        for node in targets:
+            if node.Class() == "BackdropNode":
+                raise ValueError("auto-layout does not support BackdropNode targets")
+            if not callable(getattr(node, "autoplace", None)):
+                raise NodeGraphMutationError("native node autoplace is unavailable")
+            _require_unlocked_layout_node(node)
+        ancestor = parent
+        for _ in range(65):
+            _require_unlocked_layout_node(ancestor)
+            if ancestor == root:
+                break
+            ancestor = _layout_parent(ancestor)
+        else:
+            raise ValueError("auto-layout Group nesting exceeds the supported limit")
+        modified = root.modified()
+        if type(modified) is not bool or not callable(getattr(root, "setModified", None)):
+            raise NodeGraphMutationError("script modified state could not be verified")
+
+        try:
+            with parent:
+                for node in targets:
+                    node.autoplace()
+            _restore_layout_selection(before)
+            after = _layout_snapshot(nuke)
+            _verify_layout_preservation(before, after, set(node_names))
+            changed_count = sum(before[name]["position"] != after[name]["position"] for name in node_names)
+            root.setModified(modified or bool(changed_count))
+            if root.modified() is not (modified or bool(changed_count)):
+                raise NodeGraphMutationError("script modified state readback failed")
+        except Exception:
+            _rollback_layout(nuke, before, modified)
+            raise NodeGraphMutationError("native auto-layout failed; original graph layout restored") from None
+
+        return {
+            "algorithm": "nuke_native_autoplace",
+            "parent": "root" if parent == root else _node_identity(parent),
+            "node_count": len(targets),
+            "changed_count": changed_count,
+            "nodes": [
+                {
+                    "name": node.name(),
+                    "full_name": name,
+                    "before": {"x": before[name]["position"][0], "y": before[name]["position"][1]},
+                    "x": after[name]["position"][0],
+                    "y": after[name]["position"][1],
+                }
+                for name, node in zip(node_names, targets)
+            ],
+        }
+
+
 def connect_input(
     nuke: Any,
     node_name: str,
@@ -165,6 +234,7 @@ def set_knob(nuke: Any, node_name: str, knob_name: str, value: Any) -> dict[str,
 
 
 def _describe_node(node: Any, *, max_knobs_per_node: int) -> dict[str, Any]:
+    x, y = _node_position(node)
     inputs = []
     input_count = min(int(node.inputs()), 64)
     for index in range(input_count):
@@ -194,7 +264,10 @@ def _describe_node(node: Any, *, max_knobs_per_node: int) -> dict[str, Any]:
             omitted.append(name)
     return {
         "name": node.name(),
+        "full_name": _node_identity(node),
         "class": node.Class(),
+        "x": x,
+        "y": y,
         "inputs": inputs,
         "knobs": values,
         "omitted_knobs": omitted,
@@ -243,6 +316,115 @@ def _graph_snapshot(nuke: Any) -> dict[str, Any]:
 def _node_identity(node: Any) -> str:
     full_name = getattr(node, "fullName", None)
     return str(full_name()) if callable(full_name) else str(node.name())
+
+
+def _layout_snapshot(nuke: Any) -> dict[str, Any]:
+    graph = _graph_snapshot(nuke)
+    if len(graph) > 1000:
+        raise ValueError("auto-layout supports graphs with at most 1000 nodes")
+    snapshot = {}
+    for name, node in graph.items():
+        if not callable(getattr(node, "setXYpos", None)) or not callable(getattr(node, "setSelected", None)):
+            raise NodeGraphMutationError("node layout state cannot be restored")
+        selected = node.isSelected()
+        if type(selected) is not bool:
+            raise NodeGraphMutationError("node selection state could not be verified")
+        count = node.inputs()
+        _bounded_int("auto-layout node input count", count, 0, 64)
+        snapshot[name] = {
+            "node": node,
+            "class": node.Class(),
+            "position": _layout_position(node),
+            "selected": selected,
+            "inputs": tuple(node.input(index) for index in range(count)),
+        }
+    return snapshot
+
+
+def _layout_position(node: Any) -> tuple[int, int]:
+    readers = (getattr(node, "xpos", None), getattr(node, "ypos", None))
+    if not all(callable(reader) for reader in readers):
+        raise NodeGraphMutationError("native node position readback is unavailable")
+    position = tuple(reader() for reader in readers)
+    for value in position:
+        _bounded_int("auto-layout node coordinate", value, -1_000_000, 1_000_000)
+    return position
+
+
+def _require_unlocked_layout_node(node: Any) -> None:
+    probe = getattr(node, "locked", None)
+    if not callable(probe) or type(locked := probe()) is not bool:
+        raise NodeGraphMutationError("node lock state could not be verified")
+    if locked:
+        raise ValueError("auto-layout does not support locked nodes or Groups")
+
+
+def _layout_parent(node: Any) -> Any:
+    reader = getattr(node, "parent", None)
+    if not callable(reader) or (parent := reader()) is None:
+        raise NodeGraphMutationError("node parent Group could not be verified")
+    return parent
+
+
+def _restore_layout_selection(snapshot: dict[str, Any]) -> None:
+    for state in snapshot.values():
+        if state["node"].isSelected() is not state["selected"]:
+            state["node"].setSelected(state["selected"])
+
+
+def _verify_layout_preservation(before: dict[str, Any], after: dict[str, Any], targets: set[str]) -> None:
+    if before.keys() != after.keys():
+        raise NodeGraphMutationError("node graph membership changed during auto-layout")
+    for name, previous in before.items():
+        actual = after[name]
+        if any(previous[key] != actual[key] for key in ("node", "class", "inputs", "selected")):
+            raise NodeGraphMutationError("node graph topology or selection changed during auto-layout")
+        if name not in targets and previous["position"] != actual["position"]:
+            raise NodeGraphMutationError("native auto-layout moved an unrequested node")
+
+
+def _rollback_layout(nuke: Any, before: dict[str, Any], modified: bool) -> None:
+    failures = []
+    for state in before.values():
+        node = state["node"]
+        try:
+            # Clear any unexpected new input slots before restoring original links.
+            count = node.inputs()
+            _bounded_int("auto-layout node input count", count, 0, 64)
+            for index in range(max(count, len(state["inputs"]))):
+                source = state["inputs"][index] if index < len(state["inputs"]) else None
+                if node.input(index) != source:
+                    node.setInput(index, source)
+        except Exception:
+            failures.append("topology")
+        try:
+            # An invalid position readback still permits an exact setter rollback.
+            try:
+                unchanged = _layout_position(node) == state["position"]
+            except Exception:
+                unchanged = False
+            if not unchanged:
+                node.setXYpos(*state["position"])
+        except Exception:
+            failures.append("position")
+        try:
+            if node.isSelected() is not state["selected"]:
+                node.setSelected(state["selected"])
+        except Exception:
+            failures.append("selection")
+    try:
+        _verify_layout_preservation(before, _layout_snapshot(nuke), set())
+    except Exception:
+        failures.append("readback")
+    root = nuke.root()
+    try:
+        root.setModified(True if failures else modified)
+        if root.modified() is not (True if failures else modified):
+            failures.append("modified")
+    except Exception:
+        failures.append("modified")
+    if failures:
+        raise NodeGraphMutationError("auto-layout rollback failed; script state could not be restored") from None
 
 
 def _recover_partial_creation(
