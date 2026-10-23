@@ -1,6 +1,6 @@
 tools:
   - name: package_script
-    description: Preview or collect the active Nuke script and bounded dependencies into a new folder or zip, with relative paths, verified restoration of the live script, and explicit missing/unrewritten/plugin reports. Long copies use the shared async job model; inspect_package verifies the finished package receipt.
+    description: Preview or collect the active Nuke script and bounded dependencies into a new folder or zip. Native SDK snapshots stay on the main thread; filesystem work runs on the shared async worker. Used-frame proof failures identify the node, knob, path and reason. Publication refuses scene drift and verifies restoration; inspect_package verifies the finished receipt.
     input_schema:
       type: object
       required: [output_path]
@@ -19,7 +19,7 @@ tools:
     destructive: false
     idempotent: false
     execution: async
-    affinity: main
+    affinity: any
     timeout_hint_secs: 7200
     source_file: scripts/package_script.py
     next-tools:
@@ -37,6 +37,6 @@ tools:
     destructive: false
     idempotent: true
     execution: sync
-    affinity: main
+    affinity: any
     timeout_hint_secs: 60
     source_file: scripts/inspect_package.py

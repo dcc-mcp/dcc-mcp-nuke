@@ -204,7 +204,7 @@ def relink_missing_files(
     return _change_paths(nuke, propose, dry_run, node_classes, max_items)
 
 
-def _references(nuke, max_items, node_classes):
+def _references(nuke, max_items, node_classes, *, include_exists=True):
     _bounded_int("max_items", max_items, 1, _MAX_ITEMS)
     classes = _node_classes(node_classes)
     try:
@@ -228,7 +228,7 @@ def _references(nuke, max_items, node_classes):
                         continue
                 count += 1
                 if count <= max_items:
-                    records.append((_describe(node, node_class, name, knob), knob))
+                    records.append((_describe(node, node_class, name, knob, include_exists=include_exists), knob))
         return records, count
     except FileReferenceError:
         raise
@@ -236,7 +236,7 @@ def _references(nuke, max_items, node_classes):
         raise FileReferenceRuntimeError("failed to enumerate Nuke file references") from None
 
 
-def _describe(node, node_class, name, knob):
+def _describe(node, node_class, name, knob, *, include_exists=True):
     record = {
         "node": str(node.fullName())[:256],
         "class": node_class[:128],
@@ -256,7 +256,7 @@ def _describe(node, node_class, name, knob):
         record["animated"] = animated
         if not raw:
             record["evaluated_path"] = ""
-            record["exists"] = False
+            record["exists"] = False if include_exists else None
             return record
     except Exception:
         record["error"] = "unreadable_file_knob"
@@ -265,7 +265,8 @@ def _describe(node, node_class, name, knob):
         if not isinstance(evaluated, str) or len(evaluated) > _MAX_PATH:
             raise ValueError
         record["evaluated_path"] = evaluated
-        record["exists"] = path_exists(reference_path(record))
+        if include_exists:
+            record["exists"] = path_exists(reference_path(record))
     except Exception:
         record["error"] = "evaluation_failed"
     return record

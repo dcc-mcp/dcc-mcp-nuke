@@ -78,6 +78,12 @@ class Node:
     def knobs(self):
         return self._knobs
 
+    def inputs(self):
+        return 0
+
+    def input(self, index):
+        return None
+
     def fileDependencies(self, first, last):
         assert (first, last) == (1, 2)
         return self.dependencies
@@ -136,6 +142,9 @@ class Nuke:
 
     def root(self):
         return self._root
+
+    def frame(self):
+        return 1
 
     def allNodes(self, *, group, recurseGroups):
         assert group is self._root and recurseGroups is True
@@ -535,7 +544,7 @@ def test_collect_skill_contract_declares_async_main_thread_and_readback():
     manifest = yaml.safe_load((SKILL_ROOT / "tools.yaml").read_text(encoding="utf-8"))
     package = manifest["tools"][0]
     assert package["execution"] == "async"
-    assert package["affinity"] == "main"
+    assert package["affinity"] == "any"
     assert package["input_schema"]["properties"]["dry_run"]["default"] is True
     assert find_unpaired_write_verbs(manifest["tools"]) == []
 
@@ -555,7 +564,7 @@ def test_collect_route_preview_and_safe_failures(tmp_path, monkeypatch):
     assert "private" not in str(result)
 
 
-def test_server_loads_collect_routes_with_main_thread_affinity(monkeypatch):
+def test_server_loads_collect_routes_with_worker_affinity(monkeypatch):
     from dcc_mcp_nuke.dispatcher import NukeDispatcher
     from dcc_mcp_nuke.server import NukeMcpServer
 
@@ -566,7 +575,7 @@ def test_server_loads_collect_routes_with_main_thread_affinity(monkeypatch):
         server.register_builtin_actions()
         assert server.load_skill("nuke-collect") is True
         action = next(item for item in server.list_actions() if item["name"] == "nuke_collect__package_script")
-        assert action["thread_affinity"] == "main"
+        assert action.get("thread_affinity", "any") == "any"
         assert action["enforce_thread_affinity"] is True
     finally:
         server.stop()

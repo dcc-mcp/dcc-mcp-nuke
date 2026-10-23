@@ -32,15 +32,23 @@ The tool runs through the existing asynchronous job model. Poll the returned
 job with `jobs_get_status` and read its final result; request cancellation through
 the shared job API. File/byte/reference caps apply before copying, report arrays
 have independent bounds, and copies check cooperative cancellation every 8 MB.
-Nuke host calls retain main-thread affinity. Copies remain bounded but can keep
-the host busy until the async job finishes or cancellation is observed.
+The job runs on a worker. Only native SDK reference/dependency snapshots and
+temporary script serialization use Nuke's main-thread bridge. Directory scans,
+file checks, copies, archive creation and receipt verification run off that
+thread, including dry runs. Nuke's own `fileDependencies` call still runs on the
+main thread; its internal cost depends on the graph and native plug-ins.
 
 `frame_mode: all` collects every existing frame of printf/hash sequences.
 `frame_mode: used` uses Nuke's `fileDependencies` for the selected inclusive
 frame range (Root range by default), including Nuke's time-shift and view
 dependency calculation. It queries Write outputs when present, otherwise the
 nodes themselves. Sequences without a proven dependency result are rejected.
-Disconnected sequences may require `all` mode. Write destinations are changed
+An unproven sequence fails with `node`, `class`, `knob`, `path`, `frame_range`
+and a `reason` in the error context; failed native queries also name `query_node`.
+Empty, missing or mismatched dependency proofs are never treated as permission
+to skip a sequence. Proven used paths are checked directly without globbing the
+whole sequence directory. Disconnected sequences may require `all` mode.
+Write destinations are changed
 only in the copied script to a package-local `renders` directory.
 
 File discovery reuses `nuke-paths` and includes Root file knobs for custom OCIO
@@ -87,6 +95,10 @@ can enter the temporary rewrite transaction. They are restored from their exact
 original serialization in `finally`, along with Root name and modified state; undo
 recording is suppressed during this temporary transaction. The copied script
 is serialized with Nuke's `scriptSaveToTemp`, which leaves the original disk
-script untouched. A mismatch or failed rollback fails the job before publication.
+script untouched. The native copy is first serialized to an owned local temp
+file, then copied to staging by the worker. Changes to Root/script/frame state,
+node membership, serialized knobs, input links or plug-in search paths during
+filesystem work reject publication before temporary edits. A mismatch or failed
+rollback fails the job before publication.
 To package a different `.nk`, open it in an isolated Nuke session (including
 `nuke -t`) and run the same typed operation there.
