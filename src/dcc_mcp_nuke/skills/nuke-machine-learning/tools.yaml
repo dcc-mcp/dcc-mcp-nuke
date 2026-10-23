@@ -131,7 +131,6 @@ tools:
         max_runtime_seconds: {type: integer, minimum: 1, maximum: 120, default: 60}
     output_schema:
       type: object
-      required: [success, message, error, prompt, context]
       properties:
         success: {type: boolean}
         message: {type: string}
@@ -139,7 +138,8 @@ tools:
         prompt: {type: [string, 'null']}
         context: {type: object}
       oneOf:
-        - properties:
+        - required: [success, message, error, prompt, context]
+          properties:
             success: {const: true}
             error: {type: 'null'}
             context:
@@ -154,9 +154,30 @@ tools:
                 output_path: {type: string}
                 artifacts: {type: array, minItems: 1, maxItems: 128, items: {type: object}}
                 live_graph_restored: {type: boolean, const: true}
-        - properties:
+        - required: [success, message, error, prompt, context]
+          properties:
             success: {const: false}
             error: {type: string}
+        - required: [job_id, status]
+          properties:
+            job_id: {type: string, minLength: 1}
+            status: {type: string, const: pending}
+            core_job_id: {type: string, minLength: 1}
+            job_id_owner: {type: string, const: core}
+            parent_job_id: {type: [string, 'null'], minLength: 1}
+            core_poll:
+              type: object
+              required: [owner, tool, arguments]
+              properties:
+                owner: {type: string, const: core}
+                tool: {type: string, const: jobs_get_status}
+                arguments:
+                  type: object
+                  required: [job_id, include_result]
+                  properties:
+                    job_id: {type: string, minLength: 1}
+                    include_result: {type: boolean, const: true}
+            _meta: {type: object}
     read_only: false
     destructive: false
     idempotent: false
@@ -178,7 +199,6 @@ tools:
         max_runtime_seconds: {type: integer, minimum: 1, maximum: 120, default: 60}
     output_schema:
       type: object
-      required: [success, message, error, prompt, context]
       properties:
         success: {type: boolean}
         message: {type: string}
@@ -186,7 +206,8 @@ tools:
         prompt: {type: [string, 'null']}
         context: {type: object}
       oneOf:
-        - properties:
+        - required: [success, message, error, prompt, context]
+          properties:
             success: {const: true}
             error: {type: 'null'}
             context:
@@ -201,9 +222,30 @@ tools:
                 output_path: {type: string}
                 artifacts: {type: array, minItems: 1, maxItems: 128, items: {type: object}}
                 live_graph_restored: {type: boolean, const: true}
-        - properties:
+        - required: [success, message, error, prompt, context]
+          properties:
             success: {const: false}
             error: {type: string}
+        - required: [job_id, status]
+          properties:
+            job_id: {type: string, minLength: 1}
+            status: {type: string, const: pending}
+            core_job_id: {type: string, minLength: 1}
+            job_id_owner: {type: string, const: core}
+            parent_job_id: {type: [string, 'null'], minLength: 1}
+            core_poll:
+              type: object
+              required: [owner, tool, arguments]
+              properties:
+                owner: {type: string, const: core}
+                tool: {type: string, const: jobs_get_status}
+                arguments:
+                  type: object
+                  required: [job_id, include_result]
+                  properties:
+                    job_id: {type: string, minLength: 1}
+                    include_result: {type: boolean, const: true}
+            _meta: {type: object}
     read_only: false
     destructive: false
     idempotent: false
