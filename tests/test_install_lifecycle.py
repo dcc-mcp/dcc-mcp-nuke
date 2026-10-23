@@ -288,7 +288,7 @@ def test_ci_runs_the_install_lifecycle_smoke_explicitly() -> None:
     assert "python -m pytest tests/test_install_lifecycle.py" in workflow
 
 
-def test_ci_covers_supported_nuke_embedded_python_lines() -> None:
+def test_ci_covers_declared_python_versions() -> None:
     root = Path(__file__).resolve().parents[1]
     workflow = yaml.safe_load((root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
     versions = set(workflow["jobs"]["test"]["strategy"]["matrix"]["python"])
@@ -393,6 +393,48 @@ def test_preflight_rejects_python_that_does_not_match_nukes_embedded_runtime(
     failed = json.loads(capsys.readouterr().out)
     assert failed["verify"]["failure_stage"] == "python_compatibility"
     assert f"requires Python {mismatched_python}" in failed["verify"]["failure_reason"]
+    assert not profile.exists()
+
+
+@pytest.mark.parametrize("nuke_version", ["17.0v2", "17.1v2"])
+@pytest.mark.parametrize(("python_version", "expected_exit"), [("3.11.11", 0), ("3.13.7", 10)])
+def test_nuke17_preflight_without_runtime_markers_uses_official_python311(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    nuke_version: str,
+    python_version: str,
+    expected_exit: int,
+) -> None:
+    from dcc_mcp_nuke import _installer
+    from dcc_mcp_nuke.install_cli import main
+
+    host_dir = tmp_path / f"Nuke{nuke_version}"
+    host_dir.mkdir()
+    host_name = f"Nuke{nuke_version.split('v')[0]}"
+    host = host_dir / (host_name + ".exe" if os.name == "nt" else host_name)
+    host.write_text("synthetic host without Python version directories", encoding="utf-8")
+    profile = tmp_path / "profile"
+    monkeypatch.setenv("DCC_MCP_NUKE_PROFILE", str(profile))
+    monkeypatch.setattr(
+        _installer,
+        "_query_python",
+        lambda _path: {
+            "python_version": python_version,
+            "python_root": str(tmp_path / "site-packages"),
+            "core_version": _installer.dcc_mcp_core.__version__,
+        },
+    )
+
+    assert main(["install", "--json", "--dcc-path", str(host), "--python", sys.executable]) == expected_exit
+    result = json.loads(capsys.readouterr().out)
+    if expected_exit == 0:
+        assert result["status"] == "planned"
+        assert result["plan"]["host_version"] == nuke_version
+        assert result["plan"]["embedded_python_version"] == "3.11"
+    else:
+        assert result["verify"]["failure_stage"] == "python_compatibility"
+        assert result["verify"]["failure_reason"] == f"Nuke requires Python 3.11; selected {python_version}."
     assert not profile.exists()
 
 
