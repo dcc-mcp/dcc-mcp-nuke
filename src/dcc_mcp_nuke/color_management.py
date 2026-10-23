@@ -12,6 +12,10 @@ import re
 from typing import Any
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$")
+# Nuke 17 renamed the Root OCIO config knob to ``OCIO_config``; older hosts
+# (Nuke 15/16) still expose ``OCIOConfig``. Probe in this order so a host that
+# exposes both resolves to the current spelling.
+_OCIO_CONFIG_KNOBS = ("OCIO_config", "OCIOConfig")
 _MAX_NAME_LENGTH = 256
 _MAX_ENUM_ITEMS = 512
 _MAX_COLORSPACES = 512
@@ -47,7 +51,7 @@ def describe_color_management(
     ocio_count = 0
     ocio_truncated = False
     try:
-        ocio_knob = _root_knob(nuke, "OCIOConfig")
+        ocio_knob = _ocio_config_knob(nuke)
         ocio_config = _coerce_scalar(_knob_value(ocio_knob))
         enum = _knob_enum(ocio_knob, max_ocio_configs)
         if enum is not None:
@@ -80,7 +84,7 @@ def describe_color_management(
 def set_ocio_config(nuke: Any, config: str) -> dict[str, Any]:
     """Set the Root OCIO config from the enumerated preset list; reject unknown names."""
     _validate_name("config", config)
-    knob = _root_knob(nuke, "OCIOConfig")
+    knob = _ocio_config_knob(nuke)
     enum = _knob_enum(knob, _MAX_ENUM_ITEMS)
     if enum is None or not enum["values"]:
         raise ColorManagementValidationError("OCIO config presets are not enumerable in this Nuke host")
@@ -289,6 +293,20 @@ def _root_knob(nuke: Any, name: str) -> Any:
         raise ColorManagementValidationError(f"Root does not expose the {name} color-management knob") from None
 
 
+def _ocio_config_knob(nuke: Any) -> Any:
+    """Return the Root OCIO config knob, preferring the Nuke 17 ``OCIO_config`` name.
+
+    Older hosts only expose ``OCIOConfig``; when neither name resolves the error
+    reports the whole probed set.
+    """
+    for name in _OCIO_CONFIG_KNOBS:
+        try:
+            return _root_knob(nuke, name)
+        except ColorManagementError:
+            continue
+    raise ColorManagementValidationError("Root does not expose the OCIO config color-management knob")
+
+
 def _require_node(nuke: Any, node_name: str) -> Any:
     _validate_identifier("node_name", node_name)
     node = nuke.toNode(node_name)
@@ -313,10 +331,18 @@ def _require_node_knob(node: Any, knob_name: str) -> Any:
 
 
 def _clean_names(raw: Any) -> list[str]:
+    """Return deduplicated enum values with any ``"<value>\\t<menu label>"`` suffix stripped.
+
+    Nuke enum knobs (and ``getOcioColorSpaces``) report menu entries as
+    ``"<value>\\t<menu label>"`` while ``setValue`` and readback only carry the
+    short value before the tab, so the label must not leak into the enumeration.
+    """
     names: list[str] = []
     for item in raw:
-        if isinstance(item, str) and item and len(item) <= _MAX_NAME_LENGTH:
-            names.append(item)
+        if isinstance(item, str):
+            item = item.split("\t", 1)[0]
+            if item and len(item) <= _MAX_NAME_LENGTH:
+                names.append(item)
     return list(dict.fromkeys(names))
 
 
