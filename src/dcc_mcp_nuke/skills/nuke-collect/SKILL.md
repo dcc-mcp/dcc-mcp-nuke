@@ -36,18 +36,49 @@ The job runs on a worker. Only native SDK reference/dependency snapshots and
 temporary script serialization use Nuke's main-thread bridge. Directory scans,
 file checks, copies, archive creation and receipt verification run off that
 thread, including dry runs. Nuke's own `fileDependencies` call still runs on the
-main thread; its internal cost depends on the graph and native plug-ins.
+main thread. Used mode schedules one output and one frame per callback, with
+scene guards before and after that query, so other queued events can run
+between callbacks. A single native query is indivisible and may still block
+for seconds on network media or expensive graphs; it cannot be interrupted or
+given a hard responsiveness guarantee. Cancellation is checked before a queued
+callback starts and after native work returns. The existing job status remains
+authoritative; no live per-query progress percentage is reported.
 
 `frame_mode: all` collects every existing frame of printf/hash sequences.
 `frame_mode: used` uses Nuke's `fileDependencies` for the selected inclusive
 frame range (Root range by default), including Nuke's time-shift and view
 dependency calculation. It queries Write outputs when present, otherwise the
-nodes themselves. Sequences without a proven dependency result are rejected.
+nodes themselves, and unions the per-frame results. All queries must complete
+against the same scene, including dry runs. Full scene signatures are checked
+at each query boundary; this adds graph/knob inspection work per frame.
+For a static, single-context native Write, its default colorspace is compared
+by enum selection because Nuke lazily updates the displayed default LUT label.
+The query's known `checkHashOnRead` reset is restored and verified; other knob,
+Root and connection changes still refuse collection.
+Queries are capped at 100000, returned dependency rows at 100000 and returned
+path entries at 1000000 across the job. Duplicate rows/path entries count toward
+these work limits; `max_files` separately bounds distinct files. A work-limit
+refusal reports `dependency_query_limit`; narrow the range or increase `max_files`
+for a distinct-file limit before retrying.
+
+Only an ordinary, readable static `Read` with an unambiguous current/all-context
+path may be absent from every successful explicit-output query and appear in
+`unused_references`, with reason `not_reported_by_outputs`. Its media is not
+scanned or copied, and its path and graph remain unchanged in the copied script.
+The report is relative to the queried outputs and inclusive frame range, all
+views and Nuke's current proxy mode. It does not prove that the Read is unused
+for every possible output or configuration. Nuke's SDK excludes precomps,
+gizmos and external plug-in assets from its file dependency calculation; review
+the existing runtime dependency and unrewritten-path reports before handoff.
+
+Other sequences without a proven dependency result are rejected.
 An unproven sequence fails with `node`, `class`, `knob`, `path`, `frame_range`
 and a `reason` in the error context; failed native queries also name `query_node`.
-Empty, missing or mismatched dependency proofs are never treated as permission
-to skip a sequence. Proven used paths are checked directly without globbing the
-whole sequence directory. Disconnected sequences may require `all` mode.
+Failed or malformed queries, empty reported path lists, mismatched paths,
+ambiguous contexts and absence without explicit outputs never permit this
+omission. Proven used paths are checked directly without globbing the whole
+sequence directory. `all` mode remains the faster choice when native used-frame
+queries are expensive and collecting all frames is acceptable.
 Write destinations are changed
 only in the copied script to a package-local `renders` directory.
 
