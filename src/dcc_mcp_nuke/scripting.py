@@ -109,7 +109,7 @@ def _validate_materialized_file(file_path: str, code: str) -> dict[str, Any]:
     if metadata_file != path:
         raise PermissionError("materialized script metadata path does not match the file")
 
-    body = code.encode("utf-8")
+    body = path.read_bytes()
     digest = hashlib.sha256(body).hexdigest()
     if metadata.get("sha256") != digest:
         raise PermissionError("materialized script digest does not match its content")
@@ -118,6 +118,12 @@ def _validate_materialized_file(file_path: str, code: str) -> dict[str, Any]:
     file_ref = metadata.get("file_ref")
     if isinstance(file_ref, dict) and file_ref.get("digest") != f"sha256:{digest}":
         raise PermissionError("materialized script FileRef digest does not match its content")
+
+    # Core reads execution text with universal newlines; its descriptor still
+    # binds the original UTF-8 bytes, including any CRLF or CR line endings.
+    verified_code = body.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+    if verified_code != code:
+        raise PermissionError("materialized script text does not match the execution code")
 
     expires_at = _parse_expiry(metadata.get("expires_at"))
     if expires_at is not None and expires_at <= datetime.now(timezone.utc):
