@@ -112,7 +112,7 @@ def test_publish_refuses_scene_changes_during_worker_scan_without_touching_new_u
     assert original.read_bytes() == b"pixels"
 
 
-@pytest.mark.parametrize("proof", ["absent", "empty", "query_failed", "unreadable"])
+@pytest.mark.parametrize("proof", ["empty", "query_failed", "unreadable"])
 def test_used_sequence_refusal_reports_offending_reference_and_bounded_reason(tmp_path, monkeypatch, proof):
     _source(tmp_path, "plate.0001.exr")
     nuke = _nuke(tmp_path, tmp_path / "plate.%04d.exr")
@@ -139,7 +139,6 @@ def test_used_sequence_refusal_reports_offending_reference_and_bounded_reason(tm
     assert (
         context["reason"]
         == {
-            "absent": "dependency_not_reported",
             "empty": "dependency_paths_empty",
             "query_failed": "dependency_query_failed",
             "unreadable": "reference_unreadable",
@@ -171,36 +170,37 @@ def test_used_mode_rejects_paths_that_do_not_prove_this_sequence(tmp_path, depen
 
 
 def test_native_cumulative_dependency_rows_count_unique_files_and_do_not_repeat_paths(tmp_path):
-    from dcc_mcp_nuke.script_package_scene import _used_files
-
-    frame = str(tmp_path / "plate.0101.exr")
-    read = Node("Read1", {}, "Read")
+    frame = str(_source(tmp_path, "plate.0101.exr"))
+    nuke = _nuke(tmp_path, tmp_path / "plate.%04d.exr")
+    read = nuke.nodes[0]
     first = Node("Write1", {}, "Write", dependencies=[(read, [frame]), (read, [frame, frame])])
     second = Node("Write2", {}, "Write", dependencies=[(read, [frame, frame])])
 
-    used, error = _used_files({"Read1": read, "Write1": first, "Write2": second}, 1, 2, 1)
-
-    assert error is None
-    assert used == {"Read1": (frame,)}
+    nuke.nodes.extend([first, second])
+    result = script_package.package_script(nuke, str(tmp_path / "package"), frame_mode="used", max_files=1)
+    assert [item["source"] for item in result["files"]] == [frame]
 
 
 def test_shared_file_preserves_every_native_source_node_proof(tmp_path):
-    from dcc_mcp_nuke.script_package_scene import _used_files
-
-    frame = str(tmp_path / "plate.0001.exr")
-    reads = [Node("Read1", {}, "Read"), Node("Read2", {}, "Read")]
+    frame = str(_source(tmp_path, "plate.0001.exr"))
+    nuke = _nuke(tmp_path, tmp_path / "plate.%04d.exr", tmp_path / "plate.%04d.exr")
+    reads = nuke.nodes[:]
     write = Node("Write1", {}, "Write", dependencies=[(read, [frame, frame]) for read in reads])
-    used, error = _used_files({"Write1": write}, 1, 2, 1)
-    assert error is None
-    assert used == {"Read1": (frame,), "Read2": (frame,)}
+    nuke.nodes.append(write)
+    result = script_package.package_script(nuke, str(tmp_path / "package"), frame_mode="used", max_files=1)
+    assert result["files_count"] == 1
+    assert result["rewrite_count"] == 2
+    assert result["unused_references_count"] == 0
 
 
 @pytest.mark.parametrize("invalid", [None, 1, "bad\x00path", "x" * 8193])
 def test_repeated_valid_path_does_not_hide_invalid_native_dependency(tmp_path, invalid):
-    from dcc_mcp_nuke.script_package_scene import _used_files
-
     frame = str(tmp_path / "plate.0001.exr")
-    read = Node("Read1", {}, "Read")
+    nuke = _nuke(tmp_path, tmp_path / "plate.%04d.exr")
+    read = nuke.nodes[0]
     write = Node("Write1", {}, "Write", dependencies=[(read, [frame, frame]), (read, [frame, invalid])])
-    _, error = _used_files({"Write1": write}, 1, 2, 1)
-    assert error == {"query_node": "Write1", "reason": "dependency_query_failed"}
+    nuke.nodes.append(write)
+    with pytest.raises(FileReferenceRuntimeError) as error:
+        script_package.package_script(nuke, str(tmp_path / "package"), frame_mode="used", max_files=1)
+    assert error.value.context["query_node"] == "Write1"
+    assert error.value.context["reason"] == "dependency_query_failed"

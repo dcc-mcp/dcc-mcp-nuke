@@ -1,6 +1,6 @@
 tools:
   - name: package_script
-    description: Preview or collect the active Nuke script and bounded dependencies into a new folder or zip. Native SDK snapshots stay on the main thread; filesystem work runs on the shared async worker. Used-frame proof failures identify the node, knob, path and reason. Publication refuses scene drift and verifies restoration; inspect_package verifies the finished receipt.
+    description: Preview or collect the active Nuke script and bounded dependencies into a new folder or zip. Native SDK work stays on the main thread; filesystem work runs on the shared async worker. Used mode yields between per-output per-frame queries, but a single native call may still block; all mode avoids those queries. Readable static Reads absent from complete stable output queries are reported as unused_references without copying or rewriting. Other used-proof failures stay strict and identify their context. Publication refuses scene drift and verifies restoration; inspect_package verifies the receipt.
     input_schema:
       type: object
       required: [output_path]

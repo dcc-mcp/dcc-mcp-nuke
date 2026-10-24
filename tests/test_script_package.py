@@ -85,7 +85,7 @@ class Node:
         return None
 
     def fileDependencies(self, first, last):
-        assert (first, last) == (1, 2)
+        assert first == last and first in (1, 2)
         return self.dependencies
 
 

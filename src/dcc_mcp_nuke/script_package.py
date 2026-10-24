@@ -34,6 +34,7 @@ from dcc_mcp_nuke.script_package_scene import (
 from dcc_mcp_nuke.script_package_scene import (
     PackageScriptError,
     capture_scene,
+    capture_used_files,
     on_host_thread,
     scene_signature,
 )
@@ -67,6 +68,7 @@ def package_script(
     _bounded_int("max_report_items", max_report_items, 1, 1024)
     if frame_mode not in ("all", "used"):
         raise FileReferenceValidationError("frame_mode must be all or used")
+    check_cancelled()
     target = Path(_literal_path("output_path", output_path, absolute=True)).resolve()
     if target.exists():
         raise FileReferenceValidationError("output_path already exists; packages never overwrite targets")
@@ -85,6 +87,8 @@ def package_script(
             require_signature=not dry_run,
         ),
     )
+    if frame_mode == "used":
+        scene = capture_used_files(nuke, scene, max_files, max_references)
     first, last = scene.first, scene.last
     files: dict[str, dict[str, Any]] = {}
     destinations = {}
@@ -93,6 +97,7 @@ def package_script(
     missing = []
     unrewritten = []
     outputs = []
+    unused = []
 
     def add_file(source, kind):
         nonlocal total_bytes
@@ -154,6 +159,18 @@ def package_script(
         if not source_path or record["error"]:
             unrewritten.append(dict(identity, reason="unreadable"))
             continue
+        if (
+            frame_mode == "used"
+            and scene.used_complete
+            and scene.has_outputs
+            and record["class"] == "Read"
+            and record["node"] not in used
+            and not multiple_contexts
+            and not record["expression"]
+            and not record["animated"]
+        ):
+            unused.append(dict(identity, path=source_path, reason="not_reported_by_outputs"))
+            continue
         source_path = _resolve_source(scene, source_path, cwd)
         if frame_mode == "used" and "frame" in sequence_pattern(Path(source_path).name).groupindex:
             needed = _used_reference_paths(scene, record, source_path, used.get(record["node"]))
@@ -192,6 +209,7 @@ def package_script(
         "frame_range": [first, last],
         "files": sorted(files.values(), key=lambda item: item["relative_path"]),
         "missing": missing,
+        "unused_references": unused,
         "unrewritten": unrewritten,
         "runtime_dependencies": runtime,
         "plugin_directories": sorted(set(plugins)),
@@ -302,9 +320,7 @@ def inspect_package(output_path: str, *, max_report_items: int = 256) -> dict[st
 
 def _used_reference_paths(scene, record, source_path, needed):
     reason = None
-    if scene.used_error:
-        reason = scene.used_error["reason"]
-    elif needed is None:
+    if needed is None:
         reason = "dependency_not_reported"
     elif not needed:
         reason = "dependency_paths_empty"
@@ -325,7 +341,6 @@ def _used_reference_paths(scene, record, source_path, needed):
             **{key: record[key] for key in ("node", "class", "knob")},
             path=source_path[:8192],
             frame_range=[scene.first, scene.last],
-            **({"query_node": scene.used_error["query_node"]} if scene.used_error else {}),
         )
     return needed
 
@@ -544,8 +559,8 @@ def _report(manifest, limit):
             "plugin_directories",
         )
     }
-    for key in ("files", "missing", "unrewritten", "runtime_dependencies"):
-        items = manifest[key]
+    for key in ("files", "missing", "unrewritten", "runtime_dependencies", "unused_references"):
+        items = manifest.get(key, []) if key == "unused_references" else manifest[key]
         result[key] = items[:limit]
         result[key + "_count"] = len(items)
         result[key + "_truncated"] = len(items) > limit

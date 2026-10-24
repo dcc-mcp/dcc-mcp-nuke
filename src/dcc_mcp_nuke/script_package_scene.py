@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from functools import partial
 from typing import Any, Callable
+
+from dcc_mcp_core.cancellation import DccMcpCancelledError, check_cancelled, current_cancel_token
 
 from dcc_mcp_nuke.file_references import (
     FileReferenceRuntimeError,
@@ -15,6 +18,9 @@ from dcc_mcp_nuke.file_references import (
 )
 
 OUTPUT_CLASSES = frozenset({"Write", "DeepWrite", "WriteGeo", "WriteGeo2"})
+_MAX_DEPENDENCY_QUERIES = 100000
+_MAX_DEPENDENCY_ROWS = 100000
+_MAX_DEPENDENCY_PATHS = 1000000
 
 
 class PackageScriptError(FileReferenceRuntimeError):
@@ -37,18 +43,32 @@ class PackageScene:
     plugins: tuple[str, ...]
     plugin_paths: tuple[str, ...]
     used: dict[str, tuple[str, ...]]
-    used_error: dict[str, str] | None
+    query_nodes: tuple[tuple[str, str], ...]
+    has_outputs: bool
+    used_complete: bool
     signature: tuple[Any, ...] | None
 
 
 def on_host_thread(nuke: Any, callback: Callable[[], Any]) -> Any:
     """Use Nuke's SDK bridge rather than moving host handles to a worker."""
-    if threading.current_thread() is threading.main_thread():
+    probe = current_cancel_token()
+
+    def run():
+        _check_probe(probe)
         return callback()
+
+    if threading.current_thread() is threading.main_thread():
+        return run()
     dispatch = getattr(nuke, "executeInMainThreadWithResult", None)
     if not callable(dispatch):
         raise PackageScriptError("Nuke main-thread snapshot dispatch is unavailable", "snapshot_dispatch_unavailable")
-    return dispatch(callback)
+    return dispatch(run)
+
+
+def _check_probe(probe):
+    # Core 0.20.14 tokens expose cancelled but do not yet provide check().
+    if probe is not None and probe.cancelled:
+        raise DccMcpCancelledError("Request cancelled by client")
 
 
 def serialization(knob: Any, context: Any) -> str:
@@ -154,7 +174,7 @@ def capture_scene(
         project = root["project_directory"].evaluate()
     except Exception:
         project = ""
-    used, used_error = _used_files(nodes, first, last, max_files) if frame_mode == "used" else ({}, None)
+    outputs = tuple(sorted((name, node.Class()) for name, node in nodes.items() if node.Class() in OUTPUT_CLASSES))
     return PackageScene(
         original_script=str(root.name()),
         project_directory=project if isinstance(project, str) else "",
@@ -165,36 +185,127 @@ def capture_scene(
         node_plugins=tuple(node_plugins),
         plugins=tuple(value for value in plugins if isinstance(value, str) and len(value) <= 8192),
         plugin_paths=tuple(value for value in folders if isinstance(value, str) and len(value) <= 8192),
-        used=used,
-        used_error=used_error,
-        signature=scene_signature(nuke, max_references) if require_signature else None,
+        used={},
+        query_nodes=outputs or tuple(sorted((name, node.Class()) for name, node in nodes.items())),
+        has_outputs=bool(outputs),
+        used_complete=False,
+        signature=scene_signature(nuke, max_references) if require_signature or frame_mode == "used" else None,
     )
 
 
-def _used_files(nodes: dict[str, Any], first: int, last: int, max_files: int):
-    queries = [node for node in nodes.values() if node.Class() in OUTPUT_CLASSES] or list(nodes.values())
+def capture_used_files(nuke: Any, scene: PackageScene, max_files: int, max_references: int) -> PackageScene:
+    """Yield the host between single-frame queries; only plain records reach this worker."""
+    check_cancelled()
+    query_count = len(scene.query_nodes) * (scene.last - scene.first + 1)
+    if query_count > _MAX_DEPENDENCY_QUERIES:
+        raise PackageScriptError(
+            "used-frame collection exceeds the native query budget; reduce the frame range",
+            "dependency_query_limit",
+            frame_range=[scene.first, scene.last],
+            query_count=query_count,
+            max_queries=_MAX_DEPENDENCY_QUERIES,
+        )
+    probe = current_cancel_token()
     used: dict[str, dict[str, None]] = {}
     unique_paths: set[str] = set()
-    for node in queries:
-        try:
-            dependencies = node.fileDependencies(first, last)
-            for dependency, paths in dependencies:
-                if not isinstance(paths, (list, tuple)) or any(
-                    not isinstance(path, str) or len(path) > 8192 or "\x00" in path for path in paths
-                ):
-                    raise ValueError
-                name = dependency.fullName()
+    row_count = path_count = 0
+    for query_name, query_class in scene.query_nodes:
+        for frame in range(scene.first, scene.last + 1):
+            check_cancelled()
+            try:
+                rows = on_host_thread(
+                    nuke,
+                    partial(
+                        _query_used_frame,
+                        nuke,
+                        scene,
+                        query_name,
+                        query_class,
+                        frame,
+                        max_references,
+                        probe,
+                        _MAX_DEPENDENCY_ROWS - row_count,
+                        _MAX_DEPENDENCY_PATHS - path_count,
+                    ),
+                )
+            except (PackageScriptError, DccMcpCancelledError):
+                raise
+            except Exception:
+                raise _dependency_failure(scene, query_name, query_class, frame) from None
+            check_cancelled()
+            row_count += len(rows)
+            for name, paths in rows:
+                check_cancelled()
+                path_count += len(paths)
                 files = used.setdefault(name, {})
-                # Native Nuke can repeat cumulative lists for every frame and
-                # output. Bound distinct proven files, not repeated SDK rows.
                 for path in paths:
+                    check_cancelled()
                     unique_paths.add(path)
                     if len(unique_paths) > max_files:
-                        raise ValueError
+                        raise _dependency_failure(scene, query_name, query_class, frame)
                     files[path] = None
-        except Exception:
-            return {name: tuple(files) for name, files in used.items()}, {
-                "query_node": str(node.fullName())[:256],
-                "reason": "dependency_query_failed",
-            }
-    return {name: tuple(files) for name, files in used.items()}, None
+    check_cancelled()
+    on_host_thread(nuke, lambda: _assert_scene_unchanged(nuke, scene, max_references))
+    return replace(scene, used={name: tuple(files) for name, files in used.items()}, used_complete=True)
+
+
+def _assert_scene_unchanged(nuke, scene, max_references):
+    if scene.signature is None or scene_signature(nuke, max_references) != scene.signature:
+        raise PackageScriptError("Nuke scene changed since collection snapshot", "scene_changed_since_snapshot")
+
+
+def _query_used_frame(nuke, scene, query_name, query_class, frame, max_references, probe, rows_left, paths_left):
+    # One indivisible SDK call can still block. Never pump nested Qt events or
+    # move a Nuke handle to the worker to hide that native limitation.
+    _check_probe(probe)
+    _assert_scene_unchanged(nuke, scene, max_references)
+    nodes = {node.fullName(): node for node in nuke.allNodes(group=nuke.root(), recurseGroups=True)}
+    dependencies = nodes[query_name].fileDependencies(frame, frame)
+    _check_probe(probe)
+    if not isinstance(dependencies, (list, tuple)):
+        raise ValueError
+    if len(dependencies) > rows_left:
+        raise _dependency_failure(scene, query_name, query_class, frame, "dependency_query_limit", limit="rows")
+    rows = []
+    for row in dependencies:
+        _check_probe(probe)
+        if not isinstance(row, (list, tuple)) or len(row) != 2:
+            raise ValueError
+        dependency, paths = row
+        if not isinstance(paths, (list, tuple)):
+            raise ValueError
+        paths_left -= len(paths)
+        if paths_left < 0:
+            raise _dependency_failure(scene, query_name, query_class, frame, "dependency_query_limit", limit="paths")
+        name = dependency.fullName()
+        if (
+            not isinstance(name, str)
+            or not name
+            or len(name) > 256
+            or "\x00" in name
+            or name not in nodes
+            or any(not isinstance(path, str) or len(path) > 8192 or "\x00" in path for path in paths)
+        ):
+            raise ValueError
+        rows.append((name, tuple(paths)))
+    _assert_scene_unchanged(nuke, scene, max_references)
+    return tuple(rows)
+
+
+def _dependency_failure(scene, query_name, query_class, frame, reason="dependency_query_failed", **extra):
+    reference = next((item for item in scene.records if item["class"] not in OUTPUT_CLASSES | {"Root"}), None)
+    identity = (
+        {key: reference[key] for key in ("node", "class", "knob")}
+        if reference
+        else {"node": query_name[:256], "class": query_class[:128], "knob": "file"}
+    )
+    return PackageScriptError(
+        "used-frame dependencies could not be proven for a reference",
+        reason,
+        **identity,
+        path=((reference["raw_value"] or reference["evaluated_path"] or "") if reference else "")[:8192],
+        frame_range=[scene.first, scene.last],
+        query_node=query_name[:256],
+        query_frame=frame,
+        **extra,
+    )
