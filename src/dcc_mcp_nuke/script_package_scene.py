@@ -62,7 +62,39 @@ def on_host_thread(nuke: Any, callback: Callable[[], Any]) -> Any:
     dispatch = getattr(nuke, "executeInMainThreadWithResult", None)
     if not callable(dispatch):
         raise PackageScriptError("Nuke main-thread snapshot dispatch is unavailable", "snapshot_dispatch_unavailable")
-    return dispatch(run)
+    marker = object()
+    calls = 0
+
+    def capture():
+        nonlocal calls
+        calls += 1
+        if calls != 1:
+            return None
+        try:
+            return marker, True, run()
+        except BaseException as exc:
+            # Nuke's bridge can swallow raised exceptions and return None.
+            # Return the original exception without retaining host SDK frames.
+            exc.__traceback__ = None
+            exc.__cause__ = None
+            exc.__context__ = None
+            return marker, False, exc
+
+    outcome = dispatch(capture)
+    if (
+        calls != 1
+        or type(outcome) is not tuple
+        or len(outcome) != 3
+        or outcome[0] is not marker
+        or type(outcome[1]) is not bool
+        or (outcome[1] is False and not isinstance(outcome[2], BaseException))
+    ):
+        raise PackageScriptError(
+            "Nuke main-thread dispatch returned no valid outcome", "snapshot_dispatch_invalid_result"
+        )
+    if not outcome[1]:
+        raise outcome[2]
+    return outcome[2]
 
 
 def _check_probe(probe):
@@ -75,6 +107,22 @@ def serialization(knob: Any, context: Any) -> str:
     value = knob.toScript(False, context)
     if not isinstance(value, str) or len(value) > 1000000:
         raise FileReferenceRuntimeError("knob full-context serialization is not a bounded string")
+    return value
+
+
+def _signature_value(nuke, node, name, knob, value):
+    # Nuke updates Write's default LUT label without changing its enum selection.
+    if (
+        node.Class() == "Write"
+        and name == "colorspace"
+        and knob.Class() == "Enumeration_Knob"
+        and knob.isAnimated() is False
+        and knob.hasExpression() is False
+        and knob.getValue() == 0
+        and value == serialization(knob, nuke.OutputContext())
+        and (value == "default" or (value.startswith("default (") and value.endswith(")")))
+    ):
+        return ("native_write_default_colorspace", 0)
     return value
 
 
@@ -95,7 +143,7 @@ def scene_signature(nuke: Any, max_nodes: int) -> tuple[Any, ...]:
             size += len(value)
             if size > 50000000:
                 raise PackageScriptError("scene serialization exceeds snapshot limit", "scene_snapshot_limit")
-            knobs.append((name, value))
+            knobs.append((name, _signature_value(nuke, node, name, knob, value)))
         count = node.inputs() if node is not root else 0
         if type(count) is not int or not 0 <= count <= max_nodes:
             raise PackageScriptError("scene inputs cannot be snapshotted", "scene_snapshot_unavailable")
@@ -242,7 +290,9 @@ def capture_used_files(nuke: Any, scene: PackageScene, max_files: int, max_refer
                     check_cancelled()
                     unique_paths.add(path)
                     if len(unique_paths) > max_files:
-                        raise _dependency_failure(scene, query_name, query_class, frame)
+                        raise _dependency_failure(
+                            scene, query_name, query_class, frame, "dependency_query_limit", limit="files"
+                        )
                     files[path] = None
     check_cancelled()
     on_host_thread(nuke, lambda: _assert_scene_unchanged(nuke, scene, max_references))
@@ -260,7 +310,7 @@ def _query_used_frame(nuke, scene, query_name, query_class, frame, max_reference
     _check_probe(probe)
     _assert_scene_unchanged(nuke, scene, max_references)
     nodes = {node.fullName(): node for node in nuke.allNodes(group=nuke.root(), recurseGroups=True)}
-    dependencies = nodes[query_name].fileDependencies(frame, frame)
+    dependencies = _query_dependencies(nuke, nodes[query_name], frame)
     _check_probe(probe)
     if not isinstance(dependencies, (list, tuple)):
         raise ValueError
@@ -290,6 +340,50 @@ def _query_used_frame(nuke, scene, query_name, query_class, frame, max_reference
         rows.append((name, tuple(paths)))
     _assert_scene_unchanged(nuke, scene, max_references)
     return tuple(rows)
+
+
+def _query_dependencies(nuke, node, frame):
+    knob = node.knobs().get("checkHashOnRead") if node.Class() == "Write" else None
+    restore = (
+        knob is not None
+        and knob.Class() == "Boolean_Knob"
+        and knob.isAnimated() is False
+        and knob.hasExpression() is False
+        and knob.value() is True
+        and serialization(knob, None) == serialization(knob, nuke.OutputContext()) == "true"
+    )
+    try:
+        return node.fileDependencies(frame, frame)
+    finally:
+        # fileDependencies clears this Write setting even though it is a read query.
+        if (
+            restore
+            and knob.isAnimated() is False
+            and knob.hasExpression() is False
+            and knob.value() is False
+            and serialization(knob, None) == serialization(knob, nuke.OutputContext()) == "false"
+        ):
+            try:
+                nuke.Undo.disable()
+                try:
+                    knob.fromScript("true")
+                finally:
+                    nuke.Undo.enable()
+                if (
+                    knob.value() is not True
+                    or knob.isAnimated() is not False
+                    or knob.hasExpression() is not False
+                    or serialization(knob, None) != "true"
+                    or serialization(knob, nuke.OutputContext()) != "true"
+                ):
+                    raise ValueError
+            except Exception:
+                raise PackageScriptError(
+                    "Nuke dependency query setting could not be restored",
+                    "dependency_state_restore_failed",
+                    node=node.fullName(),
+                    knob="checkHashOnRead",
+                ) from None
 
 
 def _dependency_failure(scene, query_name, query_class, frame, reason="dependency_query_failed", **extra):

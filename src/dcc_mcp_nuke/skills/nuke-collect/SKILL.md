@@ -51,10 +51,15 @@ dependency calculation. It queries Write outputs when present, otherwise the
 nodes themselves, and unions the per-frame results. All queries must complete
 against the same scene, including dry runs. Full scene signatures are checked
 at each query boundary; this adds graph/knob inspection work per frame.
+For a static, single-context native Write, its default colorspace is compared
+by enum selection because Nuke lazily updates the displayed default LUT label.
+The query's known `checkHashOnRead` reset is restored and verified; other knob,
+Root and connection changes still refuse collection.
 Queries are capped at 100000, returned dependency rows at 100000 and returned
 path entries at 1000000 across the job. Duplicate rows/path entries count toward
 these work limits; `max_files` separately bounds distinct files. A work-limit
-refusal reports `dependency_query_limit`; narrow the frame range before retrying.
+refusal reports `dependency_query_limit`; narrow the range or increase `max_files`
+for a distinct-file limit before retrying.
 
 Only an ordinary, readable static `Read` with an unambiguous current/all-context
 path may be absent from every successful explicit-output query and appear in
