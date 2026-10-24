@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.20.0](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.19.1...v0.20.0) (2026-10-24)
+
+
+### Features
+
+* distinguish Nuke family capability evidence ([6859220](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/6859220f76b1d4ffa0ba5076e718b9b9c74287b2))
+
+
+### Bug Fixes
+
+* keep runtime capability probes passive ([3614720](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/36147207f3a6fbfb8154d6a72025268d3f933ee6))
+
 ## [0.19.1](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.19.0...v0.19.1) (2026-10-23)
 
 
