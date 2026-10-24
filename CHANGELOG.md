@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.20.1](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.20.0...v0.20.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* preserve cold dependency query state and errors ([2d921fd](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/2d921fde6d8af4bda42043e155d95abe01be21b4))
+* preserve responsive used-frame collection ([8274419](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/82744196a501f713ebb7ebadbb7576529365fb52))
+* preserve script integrity across line endings ([932c3be](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/932c3be7dcb26b75b7919235b175e63c157a4a8c))
+* split used dependency queries and report omitted Reads ([271a4f5](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/271a4f5a9eb8c9f71ad7fa06b25612e8e5fe0f3c))
+* validate materialized script bytes before newline normalization ([660cb6d](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/660cb6d1967b9ca2094d492d7f4b84e8862d523a))
+
 ## [0.20.0](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.19.1...v0.20.0) (2026-10-24)
 
 
