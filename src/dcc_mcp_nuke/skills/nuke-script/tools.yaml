@@ -95,7 +95,9 @@ tools:
     timeout_hint_secs: 60
     source_file: scripts/sample_channel_statistics.py
   - name: save_script
-    description: Save the current Nuke script to an explicit absolute .nk path.
+    description: >-
+      Save the current Nuke script to an explicit absolute .nk path. Saving to
+      the current script path skips the overwrite prompt; other paths do not force overwrite.
     input_schema:
       type: object
       required: [path]
