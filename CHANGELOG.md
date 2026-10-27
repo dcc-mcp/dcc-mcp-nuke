@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.20.2](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.20.1...v0.20.2) (2026-10-27)
+
+
+### Bug Fixes
+
+* save current Nuke scripts without overwrite prompts ([a519661](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/a51966109d43be8ac08af20ae4d867d0e3f30619))
+* tolerate Root dependency rows in used-frame collection ([0c8c490](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/0c8c49022ffaf59d2648e2063cf2ed8ee8090227))
+
+
+### Documentation
+
+* refresh the generated DCC-MCP host matrix pointer ([9c5659b](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/9c5659bb2da333dc71097fdfa29bf413f443c98f))
+
 ## [0.20.1](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.20.0...v0.20.1) (2026-10-24)
 
 
