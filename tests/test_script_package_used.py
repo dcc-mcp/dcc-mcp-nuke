@@ -209,6 +209,55 @@ def test_failure_in_later_query_never_turns_partial_coverage_into_unused(tmp_pat
     assert not nuke.saves and not (tmp_path / "package").exists()
 
 
+@pytest.mark.parametrize("root_row", ["scene_root", "root_class_node"])
+def test_used_mode_tolerates_a_root_dependency_row_from_a_writer(tmp_path, root_row):
+    # Repro of #110: a generator -> Write script has no Read nodes, yet
+    # Write.fileDependencies() reports a Root-class row (the OCIO config path
+    # plus the .nk script itself). Root is absent from nuke.allNodes(), so the
+    # row must be safely skipped rather than failing the dependency proof.
+    nuke = _nuke(tmp_path)
+    ramp = Node("Ramp1", {}, "Ramp")
+    write = Node("Write1", {}, "Write")
+    write.inputs = lambda: 1
+    write.input = lambda index: ramp if index == 0 else None
+    root_node = nuke.root() if root_row == "scene_root" else Node("root", {}, "Root")
+    host_paths = [str(tmp_path / "config.ocio"), nuke.root().fullName()]
+
+    def query(first, last):
+        assert first == last
+        return [(root_node, host_paths)]
+
+    write.fileDependencies = query
+    nuke.nodes = [ramp, write]
+
+    result = script_package.package_script(nuke, str(tmp_path / "package"), frame_mode="used")
+
+    assert result["frame_mode"] == "used"
+    assert result["files_count"] == result["missing_count"] == result["unused_references_count"] == 0
+    assert not nuke.saves
+
+
+def test_root_dependency_row_does_not_hide_real_read_dependencies(tmp_path):
+    _source(tmp_path, "plate.0001.exr")
+    frame = _source(tmp_path, "plate.0009.exr")
+    nuke = _nuke(tmp_path, tmp_path / "plate.%04d.exr")
+    read = nuke.nodes[0]
+    write = Node("Write1", {}, "Write")
+    host_paths = [str(tmp_path / "config.ocio"), nuke.root().fullName()]
+
+    def query(first, last):
+        assert first == last
+        return [(nuke.root(), host_paths), (read, [str(frame)])]
+
+    write.fileDependencies = query
+    nuke.nodes.append(write)
+
+    result = script_package.package_script(nuke, str(tmp_path / "package"), frame_mode="used")
+
+    assert [Path(item["source"]).name for item in result["files"]] == ["plate.0009.exr"]
+    assert result["missing_count"] == result["unused_references_count"] == 0
+
+
 def test_a_read_reported_by_a_later_output_is_included_after_all_queries(tmp_path):
     frame = _source(tmp_path, "plate.0010.exr")
     nuke = _nuke(tmp_path, tmp_path / "plate.%04d.exr")
