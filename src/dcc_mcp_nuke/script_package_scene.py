@@ -327,6 +327,14 @@ def _query_used_frame(nuke, scene, query_name, query_class, frame, max_reference
         paths_left -= len(paths)
         if paths_left < 0:
             raise _dependency_failure(scene, query_name, query_class, frame, "dependency_query_limit", limit="paths")
+        # nuke.root() is deliberately absent from nuke.allNodes(), yet some Nuke
+        # builds report it in fileDependencies() as a Root-class row carrying only
+        # host-managed paths (the OCIO config and the .nk script itself). Those
+        # paths are surfaced as Root records, never collected as graph
+        # dependencies, so skip the row instead of failing the membership proof.
+        node_class = getattr(dependency, "Class", None)
+        if callable(node_class) and node_class() == "Root":
+            continue
         name = dependency.fullName()
         if (
             not isinstance(name, str)
