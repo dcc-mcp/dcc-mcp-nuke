@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.20.3](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.20.2...v0.20.3) (2026-10-30)
+
+
+### Bug Fixes
+
+* resolve Windows case mismatch in used-frame dependencies and locate scene-change drift ([39f6e2c](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/39f6e2c1ad0c718de76907f77e016fcf848dbc32))
+
 ## [0.20.2](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.20.1...v0.20.2) (2026-10-27)
 
 
