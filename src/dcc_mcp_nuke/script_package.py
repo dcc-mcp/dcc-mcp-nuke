@@ -35,6 +35,7 @@ from dcc_mcp_nuke.script_package_scene import (
     PackageScriptError,
     capture_scene,
     capture_used_files,
+    describe_scene_change,
     on_host_thread,
     scene_signature,
 )
@@ -116,10 +117,10 @@ def package_script(
                 raise FileReferenceValidationError("package exceeds max_files or max_total_bytes")
         return files[key]["relative_path"]
 
-    used = {
-        node: {os.path.normcase(os.path.abspath(os.path.join(cwd, path))) for path in paths}
-        for node, paths in scene.used.items()
-    }
+    # Keep the host-reported, original-case paths for real file I/O. Case
+    # folding belongs only to identity comparison (see _used_reference_paths),
+    # never to the paths we open, stat or copy.
+    used = {node: {os.path.abspath(os.path.join(cwd, path)) for path in paths} for node, paths in scene.used.items()}
     for record in scene.records:
         check_cancelled()
         identity = {key: record[key] for key in ("node", "class", "knob")}
@@ -325,12 +326,19 @@ def _used_reference_paths(scene, record, source_path, needed):
     elif not needed:
         reason = "dependency_paths_empty"
     else:
-        pattern = sequence_pattern(Path(source_path).name)
+        # Compare identity with ONE platform-aware normalization applied to BOTH
+        # sides: the sequence pattern (built from the knob basename) and each
+        # candidate basename (from the native dependency query). os.path.normcase
+        # folds case on Windows' case-insensitive filesystem and is a no-op on
+        # case-sensitive POSIX, so case is never ignored where it is significant.
+        # The original, unmodified paths in `needed` are returned for real I/O.
+        pattern = sequence_pattern(os.path.normcase(Path(source_path).name))
         directory = os.path.normcase(os.path.abspath(Path(source_path).parent))
         needed = sorted(
             path
             for path in needed
-            if pattern.fullmatch(Path(path).name) and os.path.normcase(os.path.abspath(Path(path).parent)) == directory
+            if pattern.fullmatch(os.path.normcase(Path(path).name))
+            and os.path.normcase(os.path.abspath(Path(path).parent)) == directory
         )
         if not needed:
             reason = "dependency_path_mismatch"
@@ -352,8 +360,13 @@ def _serialize_package_scene(nuke, scene, path, rewrites, max_references):
         local = Path(temporary) / "script.nk"
 
         def serialize():
-            if scene_signature(nuke, max_references) != scene.signature:
-                raise PackageScriptError("Nuke scene changed since collection snapshot", "scene_changed_since_snapshot")
+            current = scene_signature(nuke, max_references)
+            if current != scene.signature:
+                raise PackageScriptError(
+                    "Nuke scene changed since collection snapshot",
+                    "scene_changed_since_snapshot",
+                    **describe_scene_change(scene.signature, current),
+                )
             root = nuke.root()
             nodes = {node.fullName(): node for node in nuke.allNodes(group=root, recurseGroups=True)}
             bound = []
