@@ -126,12 +126,66 @@ def _signature_value(nuke, node, name, knob, value):
     return value
 
 
+_ROOT_FIELDS = ("name", "modified", "firstFrame", "lastFrame", "frame", "pluginPath")
+
+
+def _bounded_label(value: Any) -> str:
+    return str(value)[:200]
+
+
+def describe_scene_change(before: Any, after: Any) -> dict[str, str]:
+    """Locate the first signature field that differs, without echoing node values.
+
+    The snapshot is a private, opaque tuple, so a bare
+    ``scene_changed_since_snapshot`` reason cannot say *what* moved. A cold
+    native ``fileDependencies()`` query can perturb a derived knob (Root's OCIO
+    config, an enumeration's default label, ...) without any user edit. This
+    returns a bounded, value-free description (field / node / knob identifiers
+    only) so a host can pinpoint such a side effect instead of guessing.
+    """
+    if before is None or after is None:
+        return {"changed_field": "signature_unavailable"}
+    if not isinstance(before, tuple) or not isinstance(after, tuple) or not before or not after:
+        return {"changed_field": "signature_shape"}
+    if len(before) != len(after):
+        return {"changed_field": "node_count"}
+    root_before, root_after = before[0], after[0]
+    if root_before != root_after:
+        for index, field in enumerate(_ROOT_FIELDS):
+            left = root_before[index] if index < len(root_before) else None
+            right = root_after[index] if index < len(root_after) else None
+            if left != right:
+                return {"changed_field": "root." + field}
+        return {"changed_field": "root.other"}
+    for node_before, node_after in zip(before[1:], after[1:]):
+        if node_before == node_after:
+            continue
+        node = _bounded_label(node_before[0])
+        if node_before[0] != node_after[0]:
+            return {"changed_field": "node.name", "node": node}
+        if node_before[1] != node_after[1]:
+            return {"changed_field": "node.class", "node": node}
+        knobs_before, knobs_after = dict(node_before[2]), dict(node_after[2])
+        if knobs_before.keys() != knobs_after.keys():
+            return {"changed_field": "node.knobs", "node": node}
+        for knob in knobs_before:
+            if knobs_before[knob] != knobs_after.get(knob):
+                return {"changed_field": "node.knob", "node": node, "knob": _bounded_label(knob)}
+        if node_before[3] != node_after[3]:
+            return {"changed_field": "node.inputs", "node": node}
+    return {"changed_field": "unknown"}
+
+
 def scene_signature(nuke: Any, max_nodes: int) -> tuple[Any, ...]:
     """Prove graph, dependencies and Root state before temporary publication edits."""
     root = nuke.root()
     nodes = [root, *sorted(nuke.allNodes(group=root, recurseGroups=True), key=lambda node: node.fullName())]
     if len(nodes) - 1 > max_nodes:
-        raise PackageScriptError("Nuke scene changed since collection snapshot", "scene_changed_since_snapshot")
+        raise PackageScriptError(
+            "Nuke scene changed since collection snapshot",
+            "scene_changed_since_snapshot",
+            changed_field="node_count",
+        )
     result = [
         (root.name(), root.modified(), root.firstFrame(), root.lastFrame(), nuke.frame(), tuple(nuke.pluginPath()))
     ]
@@ -300,8 +354,19 @@ def capture_used_files(nuke: Any, scene: PackageScene, max_files: int, max_refer
 
 
 def _assert_scene_unchanged(nuke, scene, max_references):
-    if scene.signature is None or scene_signature(nuke, max_references) != scene.signature:
-        raise PackageScriptError("Nuke scene changed since collection snapshot", "scene_changed_since_snapshot")
+    if scene.signature is None:
+        raise PackageScriptError(
+            "Nuke scene changed since collection snapshot",
+            "scene_changed_since_snapshot",
+            changed_field="signature_unavailable",
+        )
+    current = scene_signature(nuke, max_references)
+    if current != scene.signature:
+        raise PackageScriptError(
+            "Nuke scene changed since collection snapshot",
+            "scene_changed_since_snapshot",
+            **describe_scene_change(scene.signature, current),
+        )
 
 
 def _query_used_frame(nuke, scene, query_name, query_class, frame, max_references, probe, rows_left, paths_left):
