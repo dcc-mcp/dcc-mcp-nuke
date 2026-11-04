@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import threading
 from dataclasses import dataclass, replace
 from functools import partial
@@ -21,6 +22,12 @@ OUTPUT_CLASSES = frozenset({"Write", "DeepWrite", "WriteGeo", "WriteGeo2"})
 _MAX_DEPENDENCY_QUERIES = 100000
 _MAX_DEPENDENCY_ROWS = 100000
 _MAX_DEPENDENCY_PATHS = 1000000
+
+# MOV QuickTime pixel-format enumerations whose transient menu labels are
+# cleared by a cold native node evaluation (GH #110). Kept distinct from the
+# Write colorspace default-label drift normalized in _signature_value below.
+_MOV_PIXEL_FORMAT_KNOBS = frozenset({"mov_pixel_format", "mov32_pixel_format", "mov64_pixel_format"})
+_ENUM_INDEX_TOKEN = re.compile(r"\{\s*(\d+)\s*\}")
 
 
 class PackageScriptError(FileReferenceRuntimeError):
@@ -110,6 +117,36 @@ def serialization(knob: Any, context: Any) -> str:
     return value
 
 
+def _native_mov_pixel_format(node, name, knob, value):
+    """Value-free, semantic signature for a host-managed MOV pixel-format enum.
+
+    A cold native evaluation (``fileDependencies`` / ``width``, GH #110) clears
+    the enumeration's transient menu labels (``{0 yuv420p ...}`` -> ``{0}``)
+    without moving the selected index or setting ``root.modified()``. The opaque
+    scene signature would otherwise differ, so ``used``-frame collection is
+    refused with ``scene_changed_since_snapshot`` even though nothing was edited.
+
+    Collapse both the cold and evaluated serializations to the selected index so
+    the guard compares the real, semantic selection. A genuine user change to a
+    different pixel format still moves the index and is rejected. Only a static,
+    recognized Write MOV pixel-format enumeration whose serialization is a pure
+    index selection is normalized; anything else keeps its raw value and stays
+    guarded.
+    """
+    if (
+        node.Class() != "Write"
+        or name not in _MOV_PIXEL_FORMAT_KNOBS
+        or knob.Class() != "Enumeration_Knob"
+        or knob.isAnimated() is not False
+        or knob.hasExpression() is not False
+    ):
+        return None
+    match = _ENUM_INDEX_TOKEN.search(value)
+    if match is None:
+        return None
+    return ("native_mov_pixel_format", name, int(match.group(1)))
+
+
 def _signature_value(nuke, node, name, knob, value):
     # Nuke updates Write's default LUT label without changing its enum selection.
     if (
@@ -123,6 +160,9 @@ def _signature_value(nuke, node, name, knob, value):
         and (value == "default" or (value.startswith("default (") and value.endswith(")")))
     ):
         return ("native_write_default_colorspace", 0)
+    token = _native_mov_pixel_format(node, name, knob, value)
+    if token is not None:
+        return token
     return value
 
 
