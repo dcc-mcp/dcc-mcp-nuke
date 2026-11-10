@@ -10,7 +10,19 @@ jobs:
     timeout-minutes: 15
     strategy:
       fail-fast: false
-      matrix: {os: [ubuntu-latest, windows-latest, macos-latest], python: ["3.9", "3.10", "3.11", "3.12", "3.13"], exclude: [{os: windows-latest, python: "3.9"}, {os: macos-latest, python: "3.9"}]}
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        # ubuntu-latest now resolves to Ubuntu 24.04/26.04, whose setup-python
+        # toolcache no longer ships CPython 3.9. Keep 3.9 in the matrix to honor
+        # requires-python >= 3.9, but run it on a runner that still carries the
+        # 3.9 toolcache instead of dropping the supported version.
+        exclude:
+          - {os: ubuntu-latest, python: "3.9"}
+          - {os: windows-latest, python: "3.9"}
+          - {os: macos-latest, python: "3.9"}
+        include:
+          - {os: ubuntu-22.04, python: "3.9"}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
