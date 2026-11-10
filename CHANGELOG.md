@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.20.4](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.20.3...v0.20.4) (2026-11-10)
+
+
+### Bug Fixes
+
+* avoid false scene_changed_since_snapshot on MOV pixel-format enums ([74ef57f](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/74ef57fb6e6d6d53978c04c432a47c4ae20c8a1b))
+* **ci:** pin Python 3.9 test job to ubuntu-22.04 runner ([ec0c831](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/ec0c831a342f2bd2fe16a704d88d25ba907ff7c4))
+
 ## [0.20.3](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.20.2...v0.20.3) (2026-10-30)
 
 
