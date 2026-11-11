@@ -4,14 +4,18 @@ The readback is a filesystem check only; a returning ``nuke.execute`` is never
 native Nuke render acceptance. The active Write filename comes from
 ``nuke.filename(node)`` (proxy-aware, sequence placeholders preserved) and is
 read AFTER ``nuke.execute`` so a ``beforeRender`` callback that changes the
-path is captured. Write frame renumbering is resolved arithmetically only
-where the Nuke knob contract allows it; ``start at`` depends on the first
-frame of the clip/sequence (not the first requested frame), which cannot be
-proven from the Write node alone, so it stays explicitly unknown. The output
-format is bound to the Write ``file_type`` or a well-founded path extension
-before any file is accepted. Unresolvable mappings, callback-driven path sets
-and unknown formats stay unknown rather than being checked against stale or
-wrong-format files.
+path is captured. Path-affecting callback state is snapshotted BEFORE and AFTER
+execute and combined: a callback that was set before the render but cleared
+itself during it cannot be ruled out by a post-only check. Write frame
+renumbering is resolved arithmetically only where the Nuke knob contract allows
+it; ``start at`` depends on the first frame of the clip/sequence (not the first
+requested frame), which cannot be proven from the Write node alone, so it stays
+explicitly unknown. The output format is bound to the Write ``file_type`` or a
+well-founded path extension before any file is accepted: a readable, empty
+``file_type`` permits path inference, while an unreadable ``file_type`` stays
+unknown because the real value could override the path suffix. Unresolvable
+mappings, callback-driven path sets and unknown formats stay unknown rather
+than being checked against stale or wrong-format files.
 """
 
 from __future__ import annotations
@@ -89,8 +93,42 @@ def _frame_mode_name(node: Any) -> str | None:
 
 
 def _file_type_name(node: Any) -> str | None:
-    """Normalized ``file_type`` name, or None if the knob is unreadable/empty."""
-    return _enum_knob_name(node, "file_type")
+    """Read the Write ``file_type`` with a three-way result:
+
+    * a non-empty ``str`` -> explicit, normalized name (may be unsupported);
+    * ``""`` -> readable and genuinely empty, so path-extension inference is a
+      proven, legal binding;
+    * ``None`` -> UNREADABLE/unknown (read failed or value could not be
+      resolved), which is NOT the same as empty: the real value could override
+      the path suffix, so the caller must keep verification unknown instead of
+      inferring a format from the filename.
+
+    ``_enum_knob_name`` is intentionally not reused: it returns None for both
+    an empty value and a read failure, which would turn an unreadable
+    ``file_type`` into a path-inferred (unproven) format binding.
+    """
+    try:
+        knob = node["file_type"]
+        raw = knob.value()
+    except Exception:
+        return None
+    if raw is None:
+        return ""  # readable, no explicit format -> empty
+    if isinstance(raw, str):
+        return raw.strip().lower()  # "" -> empty, otherwise an explicit name
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+        index = int(raw)
+        try:
+            names = knob.values()
+        except Exception:
+            names = None
+        if isinstance(names, (list, tuple)) and 0 <= index < len(names):
+            return str(names[index]).strip().lower()
+        try:
+            return str(knob.enumName(index)).strip().lower()
+        except Exception:
+            return None  # unresolvable index -> unknown
+    return None  # unexpected knob shape -> unknown
 
 
 def _integer_knob(node: Any, name: str) -> int | None:
@@ -155,23 +193,39 @@ def _callback_is_set(node: Any, name: str) -> bool:
     return bool(raw.strip())
 
 
-def _active_output_path_after_execute(nuke: Any, node: Any) -> tuple[str | None, str | None]:
-    """Resolve the active Write filename AFTER ``nuke.execute`` returned.
-
-    Returns ``(output_path, reason)``: a bounded str on success, or
-    ``(None, reason)`` when a single final path cannot prove the complete
-    rendered output set and verification must stay unknown. Render callback
-    scripts are inspected but never executed or parsed; an unreadable callback
-    knob fails closed to unknown.
+def _callback_state_snapshot(node: Any) -> dict[str, bool] | None:
+    """Read the present/absent state of every render callback, or None if any
+    knob is unreadable. Scripts are inspected, never executed or parsed. The
+    caller fails closed when the snapshot is None instead of assuming "no
+    callbacks".
     """
     try:
-        callback_state = {name: _callback_is_set(node, name) for name in _RENDER_CALLBACK_KNOBS}
+        return {name: _callback_is_set(node, name) for name in _RENDER_CALLBACK_KNOBS}
     except Exception:
-        return None, ("Write render callback state could not be read; a single final output path cannot be proven")
-    if any(callback_state[name] for name in _MULTI_PATH_CALLBACK_KNOBS):
+        return None
+
+
+def _active_output_path_after_execute(
+    nuke: Any, node: Any, pre_callback_state: dict[str, bool] | None
+) -> tuple[str | None, str | None]:
+    """Resolve the active Write filename AFTER ``nuke.execute`` returned.
+
+    ``pre_callback_state`` is the callback snapshot taken BEFORE execute. A
+    callback that was set before the render but cleared itself during it (e.g.
+    an ``afterRender`` script repointing ``file`` and clearing its own knob)
+    must not be lost: path-affecting callbacks present on EITHER side, or an
+    unreadable snapshot on EITHER side, keep verification unknown.
+    ``beforeRender`` makes at most one path change, which the post-execute
+    active filename captures, so its presence alone does not force unknown.
+    Render callback scripts are inspected but never executed or parsed.
+    """
+    post_callback_state = _callback_state_snapshot(node)
+    if pre_callback_state is None or post_callback_state is None:
+        return None, "Write render callback state could not be read; a single final output path cannot be proven"
+    if any(pre_callback_state[name] or post_callback_state[name] for name in _MULTI_PATH_CALLBACK_KNOBS):
         return None, (
-            "a per-frame or afterRender callback can change the output path; one final filename "
-            "cannot prove the rendered output set"
+            "a per-frame or afterRender callback present before or after execute can change the output path; "
+            "one final filename cannot prove the rendered output set"
         )
     # beforeRender runs once before rendering starts; reading the active
     # filename now captures its single changed path.
@@ -203,16 +257,33 @@ def main(write_node: str, first_frame: int, last_frame: int, step: int = 1, **_k
         return skill_error("Write node not found", write_node)
     first, last, incr = int(first_frame), int(last_frame), int(step)
 
+    # Snapshot callback state BEFORE execute: a callback present now but that
+    # clears itself during the render cannot be ruled out by a post-only read.
+    pre_callback_state = _callback_state_snapshot(node)
     nuke.execute(node, first, last, incr)
     # execute() returning is not proof that files exist. Report a separate,
     # explicit filesystem readback so a successful call cannot be mistaken for
     # verified output. This is not native Nuke render acceptance.
-    output_path, path_reason = _active_output_path_after_execute(nuke, node)
+    output_path, path_reason = _active_output_path_after_execute(nuke, node, pre_callback_state)
     mapping = _output_frame_bounds(node, first, last)
-    expected_format = resolve_output_format(_file_type_name(node), output_path) if output_path is not None else None
+    observed_file_type = _file_type_name(node)
+    # None means the file_type knob is UNREADABLE, not empty: the real value could
+    # override the path suffix, so it must not reach resolve_output_format (which
+    # would infer an unproven format from the path). A readable ""/None value is
+    # empty and legitimately allows path-extension inference.
+    file_type_unreadable = observed_file_type is None
+    if output_path is not None and not file_type_unreadable:
+        expected_format = resolve_output_format(observed_file_type, output_path)
+    else:
+        expected_format = None
 
     if path_reason is not None:
         reason = path_reason
+    elif file_type_unreadable:
+        reason = (
+            "the Write file_type knob could not be read; the real output format cannot be bound, "
+            "so verification stays unknown instead of inferring a format from the path"
+        )
     elif mapping is None:
         reason = (
             "Write frame renumbering could not be resolved without evaluating host expressions "

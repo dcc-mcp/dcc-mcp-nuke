@@ -29,18 +29,22 @@ B, so `minus` evaluates `A-B`.
 `render_write_node` reads back the active Write filename from
 `nuke.filename(node)` AFTER `nuke.execute` returns, which follows Root proxy
 mode, keeps sequence placeholders, and captures a `beforeRender` callback that
-changed the path; the `file` knob is not used as the output path. A per-frame
-or `afterRender` callback (or an unreadable callback knob) can make one final
-filename unable to prove the whole output set, so verification stays `unknown`
-and no script is executed or parsed. Write frame renumbering is resolved by
-arithmetic only for the identity `expression` and integer `offset` mappings;
-`start at` renumbers against the first frame of the clip/sequence, which cannot
-be proven from the Write node alone, so it stays explicitly `unknown` rather
-than verifying stale output-N files. The verifier also binds `expected_format`
-to the Write `file_type` (with aliases) or a well-founded path extension
-(empty `file_type` inference); an unknown or contradictory format stays
-`unknown`, never unrestricted magic-number sniffing. The readback is
-filesystem-only, never native Nuke render acceptance.
+changed the path; the `file` knob is not used as the output path. Callback
+state is combined from BEFORE and AFTER execute, so a per-frame or
+`afterRender` callback that was set before the render but cleared itself during
+it (or an unreadable callback knob) cannot be ruled out: one final filename
+cannot prove the whole output set, verification stays `unknown`, and no script
+is executed or parsed. Write frame renumbering is resolved by arithmetic only
+for the identity `expression` and integer `offset` mappings; `start at`
+renumbers against the first frame of the clip/sequence, which cannot be proven
+from the Write node alone, so it stays explicitly `unknown` rather than
+verifying stale output-N files. The verifier also binds `expected_format` to
+the Write `file_type` (with aliases) or a well-founded path extension: a
+readable, empty `file_type` permits path inference, but an unreadable
+`file_type` stays `unknown` because the real value could override the path
+suffix; an unknown or contradictory format stays `unknown`, never unrestricted
+magic-number sniffing. The readback is filesystem-only, never native Nuke
+render acceptance.
 
 The builder adds nodes through the same checked CRUD creation path as
 `nuke-node-graph`. Existing nodes, names, connections, knob values, and selection

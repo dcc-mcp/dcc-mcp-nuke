@@ -42,12 +42,31 @@ class _Knob:
         return self.values()[index]
 
 
-def _fake_nuke(monkeypatch, file_path, *, active_path=None, frame_mode="expression", frame="frame", file_type=None):
-    """Install a fake Nuke host whose active filename may differ from `file`."""
+def _fake_nuke(
+    monkeypatch,
+    file_path,
+    *,
+    active_path=None,
+    frame_mode="expression",
+    frame="frame",
+    file_type=None,
+    unreadable_knob=None,
+):
+    """Install a fake Nuke host whose active filename may differ from `file`.
+
+    ``unreadable_knob`` makes one knob raise on access, modeling a knob whose
+    value cannot be read at all (distinct from a readable, empty value).
+    """
     values = {"file": file_path, "frame_mode": frame_mode, "frame": frame, "file_type": file_type}
     write = MagicMock()
     write.Class.return_value = "Write"
-    write.__getitem__.side_effect = lambda name: _Knob(values.get(name))
+
+    def _get_knob(name):
+        if name == unreadable_knob:
+            raise RuntimeError(f"{name} knob unreadable")
+        return _Knob(values.get(name))
+
+    write.__getitem__.side_effect = _get_knob
     nuke = ModuleType("nuke")
     nuke.toNode = MagicMock(return_value=write)
     nuke.execute = MagicMock()
@@ -96,6 +115,63 @@ def _callback_nuke(monkeypatch, initial_path, new_path, *, frame_callback="", re
     def execute(_node, _first, _last, _step):
         # Model beforeRender running inside execute() and changing the path.
         values["file"] = new_path
+
+    nuke = ModuleType("nuke")
+    nuke.toNode = lambda _name: write
+    nuke.filename = filename
+    nuke.execute = execute
+    monkeypatch.setitem(sys.modules, "nuke", nuke)
+    return nuke, write
+
+
+def _self_clearing_callback_nuke(monkeypatch, actual_path, stale_path):
+    """Fake Nuke modeling an ``afterRender`` callback that is set BEFORE
+    execute, then repoints ``file`` to a stale pre-existing output and clears
+    its own knob DURING execute. A post-only callback snapshot would see no
+    path-affecting callback and (wrongly) verify the stale file.
+
+    In-process fake only; NOT native Nuke render acceptance. No host is
+    launched and no user callback is executed or parsed: the script text is
+    merely a non-empty marker that is inspected.
+    """
+    values = {
+        "file": actual_path,
+        "frame_mode": "expression",
+        "frame": "frame",
+        "file_type": "png",
+        "beforeRender": "",
+        "beforeFrameRender": "",
+        "afterFrameRender": "",
+        "afterRender": "repoint file to a stale output, then clear this callback",
+    }
+
+    class Knob:
+        def __init__(self, value):
+            self._value = value
+
+        def value(self):
+            return self._value
+
+    class Write:
+        def Class(self):
+            return "Write"
+
+        def __getitem__(self, name):
+            return Knob(values.get(name))
+
+    write = Write()
+
+    def filename(_node):
+        return values["file"]  # ACTIVE file knob, read live
+
+    def execute(_node, first, last, _step):
+        # The real render produced the actual frames ...
+        for frame in range(first, last + 1):
+            Path(str(actual_path).replace("%04d", f"{frame:04d}")).write_bytes(_PNG)
+        # ... then the afterRender callback changed `file` to an existing stale
+        # output and cleared its own script. This is the self-clearing case.
+        values["file"] = stale_path
+        values["afterRender"] = ""
 
     nuke = ModuleType("nuke")
     nuke.toNode = lambda _name: write
@@ -443,6 +519,35 @@ def test_unreadable_callback_state_fails_closed_to_unknown(monkeypatch, tmp_path
     assert result["postcondition"]["verified"] is False
 
 
+def test_self_clearing_after_render_callback_does_not_verify_stale_output(monkeypatch, tmp_path):
+    """An afterRender callback set BEFORE execute but cleared DURING the render
+    cannot be ruled out by a post-only snapshot. The pre-execute state must be
+    combined with the post state, so verification stays unknown instead of
+    falling back to a stale pre-existing file. In-process fake; NOT native Nuke
+    render acceptance, no host launched, no user callback executed or parsed.
+    """
+    module = _load_render_module()
+    actual = str(tmp_path / "actual.%04d.png")
+    stale = str(tmp_path / "stale.%04d.png")
+    (tmp_path / "stale.0001.png").write_bytes(_PNG)  # stale pre-existing decodable output
+
+    _self_clearing_callback_nuke(monkeypatch, actual, stale)
+
+    result = module.main.__wrapped__("Final", 1, 1)
+
+    verification = result["context"]["output_verification"]
+    assert result["postcondition"]["verified"] is False
+    assert verification["mode"] == "unknown"
+    assert verification["content_validation"] == "not_performed"
+    assert verification["content_acceptance"] == "unknown"
+    assert verification["content_checks"] == {}
+    assert verification["expected_frames"] == []
+    assert verification["native_render_acceptance"] == "not_performed"
+    # The stale decodable file exists; it must never be accepted as proof. The
+    # unknown verdict must come from the callback, not an unrelated gate.
+    assert "callback" in verification["reason"]
+
+
 # --- Output format binding -----------------------------------------------------
 # Fake Nuke host only; NOT native Nuke render acceptance.
 
@@ -507,3 +612,55 @@ def test_format_alias_is_normalized_for_binding(monkeypatch, tmp_path):
     verification = result["context"]["output_verification"]
     assert verification["binding"]["expected_format"] == "jpg"
     assert result["postcondition"]["verified"] is False  # jpg is signature-only
+
+
+def test_unreadable_file_type_stays_unknown_not_path_inferred(monkeypatch, tmp_path):
+    """An UNREADABLE real file_type is not a readable empty one: inferring the
+    format from the path suffix would not be a proven binding (the real value
+    could override it). Verification must stay unknown even though a decodable
+    PNG sits at the .png path. In-process fake; NOT native Nuke acceptance.
+
+    This is the correct expectation for the counterexample: the bug is a
+    post-read failure collapsing to empty and path-inferring "png", then
+    reporting verified=true on the file; it must NOT be preserved as a contract.
+    """
+    module = _load_render_module()
+    active = tmp_path / "shot.%04d.png"
+    (tmp_path / "shot.0001.png").write_bytes(_PNG)  # a decodable file IS present
+
+    _fake_nuke(monkeypatch, str(active), unreadable_knob="file_type")
+
+    result = module.main.__wrapped__("Final", 1, 1)
+
+    verification = result["context"]["output_verification"]
+    assert result["postcondition"]["verified"] is False
+    assert verification["mode"] == "unknown"
+    assert verification["content_validation"] == "not_performed"
+    assert verification["content_acceptance"] == "unknown"
+    assert verification["content_checks"] == {}
+    assert verification["expected_frames"] == []
+    assert verification["native_render_acceptance"] == "not_performed"
+    # The unknown verdict must stem from the unreadable file_type, not a path
+    # or callback gate; no format binding / sniffing took place.
+    assert "file_type" in verification["reason"]
+
+
+def test_explicitly_empty_file_type_allows_path_extension_inference(monkeypatch, tmp_path):
+    """A readable, explicitly empty file_type is NOT unreadable: path-extension
+    inference remains a proven, legal binding (real Write contract). Guards the
+    distinction so the unreadable-file_type fix cannot over-correct this case.
+    """
+    module = _load_render_module()
+    active = tmp_path / "shot.%04d.exr"
+    (tmp_path / "shot.0001.exr").write_bytes(_PNG)  # wrong-format bytes
+
+    _fake_nuke(monkeypatch, str(active), file_type="")
+
+    result = module.main.__wrapped__("Final", 1, 1)
+
+    verification = result["context"]["output_verification"]
+    # A "binding" key proves verification ran with a path-inferred format
+    # (mode would be "unknown" with no binding if empty collapsed to unreadable).
+    assert verification["binding"]["expected_format"] == "exr"
+    assert verification["unreadable_frames"] == [1]
+    assert result["postcondition"]["verified"] is False  # PNG bytes at .exr
