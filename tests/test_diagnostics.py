@@ -6,8 +6,8 @@ diagnostic contracts; they are NOT native Nuke render acceptance.
 
 from __future__ import annotations
 
+import base64
 import json
-import struct
 import sys
 from types import ModuleType
 
@@ -20,16 +20,19 @@ from dcc_mcp_nuke.diagnostics import (
     verify_render_output,
 )
 
-_PNG_HEADER = b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\x0dIHDR" + struct.pack(">II", 2, 2) + b"\x08\x02\x00\x00\x00"
+# A genuinely decodable 2x2 RGB PNG (IHDR + IDAT + IEND, valid CRCs).
+_VALID_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEklEQVR42mO4Iycnd0eOAUIBACAqBGGFHUPdAAAAAElFTkSuQmCC"
+)
+# Signature-only fixtures: no decoder is available for these formats here.
 _HEADERS = {
-    "png": _PNG_HEADER,
     "jpg": b"\xff\xd8\xff\xe0\x00\x10JFIF",
     "exr": b"\x76\x2f\x31\x01" + b"\x00" * 24,
 }
 
 
 def _image(kind="png"):
-    return _HEADERS[kind] + b"\x00" * 32
+    return _VALID_PNG if kind == "png" else _HEADERS[kind] + b"\x00" * 32
 
 
 class FakeNuke:
@@ -278,12 +281,23 @@ def test_format_alias_and_magic_number_sniffing(tmp_path):
     explicit = verify_render_output(output_path=str(target), first_frame=1, last_frame=1, expected_format="jpeg")
     sniffed = verify_render_output(output_path=str(target), first_frame=1, last_frame=1)
     assert explicit["binding"]["expected_format"] == "jpg"
-    assert explicit["verified"] is True
     assert sniffed["format_check"] == "magic_number_sniffed"
     assert sniffed["detected_formats"] == {"1": "jpg"}
-    assert sniffed["verified"] is True
+    # A JPEG signature is only a candidate format. No decoder is available here,
+    # so content acceptance stays unknown and verified stays false.
+    assert explicit["verified"] is False
+    assert explicit["content_acceptance"] == "unknown"
+    assert sniffed["verified"] is False
+    assert sniffed["content_validation"] == "signature_only"
     with pytest.raises(ValueError, match="expected_format"):
         verify_render_output(output_path=str(target), first_frame=1, last_frame=1, expected_format="bmp")
+
+    png = tmp_path / "frame.png"
+    png.write_bytes(_image())
+    positive = verify_render_output(output_path=str(png), first_frame=1, last_frame=1, expected_format="PNG")
+    assert positive["binding"]["expected_format"] == "png"
+    assert positive["verified"] is True
+    assert positive["content_acceptance"] == "verified"
 
 
 def test_literal_path_cannot_prove_a_multi_frame_request(tmp_path):
@@ -298,16 +312,16 @@ def test_literal_path_cannot_prove_a_multi_frame_request(tmp_path):
 
 
 def test_negative_frames_step_and_hash_sequences(tmp_path):
-    exr_dir = tmp_path / "exr"
-    exr_dir.mkdir()
-    for name in ("shot.-002.exr", "shot.0000.exr", "shot.0002.exr"):
-        (exr_dir / name).write_bytes(_image("exr"))
+    png_dir = tmp_path / "png"
+    png_dir.mkdir()
+    for name in ("shot.-002.png", "shot.0000.png", "shot.0002.png"):
+        (png_dir / name).write_bytes(_image())
     printf = verify_render_output(
-        output_path=str(exr_dir / "shot.%04d.exr"),
+        output_path=str(png_dir / "shot.%04d.png"),
         first_frame=-2,
         last_frame=2,
         step=2,
-        expected_format="exr",
+        expected_format="png",
     )
     assert printf["expected_frames"] == [-2, 0, 2]
     assert printf["verified"] is True

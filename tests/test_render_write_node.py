@@ -1,3 +1,4 @@
+import base64
 import importlib.util
 import sys
 from pathlib import Path
@@ -6,7 +7,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-_PNG = b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR" + b"\x00" * 32
+# A genuinely decodable 2x2 RGB PNG (IHDR + IDAT + IEND, valid CRCs).
+_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEklEQVR42mO4Iycnd0eOAUIBACAqBGGFHUPdAAAAAElFTkSuQmCC"
+)
 
 
 def _load_render_module():

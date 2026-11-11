@@ -6,28 +6,35 @@ Answers three questions a user has after following the installation guide:
 2. Did a single-frame or sequence render actually produce the requested files?
 3. Where does work execute, and is there any cloud/billing/API-key surface?
 
-Everything here is read-only. No dependency, node or plug-in is installed or
-loaded; no credentials or environment values are read or returned; no private
-absolute path is exposed. ``verify_render_output`` only inspects files that
-already exist on disk, so a passing check is never native Nuke render
-acceptance and mock/fake/temp fixtures cannot prove a real render.
+Everything here is read-only. No dependency, node or plug-in is installed,
+imported or loaded; no credentials or environment values are read or returned;
+no private absolute path is exposed. ``verify_render_output`` only inspects
+files that already exist on disk, so a passing check is never native Nuke
+render acceptance and mock/fake/temp fixtures cannot prove a real render.
+
+PNG outputs are checked for real chunk structure, CRCs and IDAT decodability
+using the standard library. Formats without a decoder here are reported as
+signature-only with unknown content acceptance, never as readable/verified.
 """
 
 from __future__ import annotations
 
-import importlib.util
+import importlib.machinery
+import itertools
 import os
 import posixpath
 import re
+import struct
 import sys
+import zlib
 from pathlib import Path
 from typing import Any, Callable
 
 from dcc_mcp_nuke.file_references import sequence_pattern
 from dcc_mcp_nuke.plugins import inspect_plugin_environment
 
-# Stable magic-number prefixes. These prove a file is a readable image rather
-# than merely a present, non-empty path left behind by an aborted render.
+# Stable magic-number prefixes identify a *candidate* format only. A signature
+# by itself never proves that the file is a readable image.
 _FORMATS = {
     "png": (b"\x89PNG\r\n\x1a\n",),
     "jpg": (b"\xff\xd8\xff",),
@@ -36,6 +43,11 @@ _FORMATS = {
     "dpx": (b"SDPX", b"XPDS"),
 }
 _FORMAT_ALIASES = {"jpeg": "jpg", "tiff": "tif"}
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+_PNG_CHANNELS = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}
+_PNG_DEPTHS = {0: (1, 2, 4, 8, 16), 2: (8, 16), 3: (1, 2, 4, 8), 4: (8, 16), 6: (8, 16)}
+_CONTENT_DECODERS = ("png",)
+_MAX_IMAGE_BYTES = 64 * 1024 * 1024
 # Mirrors file_references._SEQUENCE so substitution stays consistent with the
 # reused sequence_pattern() detector.
 _FRAME_TOKEN = re.compile(r"%0?([1-9][0-9]?)?d|#+")
@@ -46,9 +58,29 @@ _MAX_ITEMS = 256
 _MAX_FRAMES = 100000
 
 
-def _default_module_available(name: str) -> bool:
-    """Locate a module without importing its top-level code or installing it."""
-    return importlib.util.find_spec(name) is not None
+def _safe_module_probe(name: str) -> str:
+    """Locate a top-level module spec without importing or executing any code.
+
+    ``importlib.util.find_spec("parent.child")`` imports ``parent`` and runs
+    its ``__init__.py``; a diagnosis must never execute the code it inspects.
+    Dotted names are therefore reported as unknown. For a single-segment name
+    only the standard spec-locating finders are consulted. A locatable spec
+    means "discoverable", not "import tested": importing can still fail on a
+    missing transitive dependency or on top-level code.
+    """
+    if "." in name:
+        return "unknown"
+    if name in sys.modules:
+        return "discoverable" if sys.modules[name] is not None else "unknown"
+    try:
+        for finder in (importlib.machinery.BuiltinImporter, importlib.machinery.FrozenImporter):
+            if finder.find_spec(name) is not None:
+                return "discoverable"
+        if importlib.machinery.PathFinder.find_spec(name) is not None:
+            return "discoverable"
+        return "not_found"
+    except Exception:
+        return "unknown"
 
 
 def _validate_list(label: str, value: Any, pattern: re.Pattern) -> list[str]:
@@ -118,27 +150,50 @@ def diagnose_dependencies(
         ),
     }
 
-    # Python modules: availability only. Never auto-install, never read secrets.
-    lookup = module_available or _default_module_available
-    method = "caller_supplied_lookup" if module_available is not None else "find_spec_locate_only"
+    # Python modules: discovery only. Never install, import or execute module
+    # code. A caller-supplied lookup may assert importability; the default
+    # probe only reports a locatable spec and never claims an import was tested.
+    supplied = module_available is not None
+    method = "caller_supplied_lookup" if supplied else "stdlib_spec_locate_no_import"
     module_report = []
     for name in modules:
-        try:
-            present = bool(lookup(name))
-            status, item_certainty = ("importable", "verified") if present else ("not_found", "verified_unavailable")
-        except Exception:
-            status, item_certainty = "unknown", "unknown"
+        if supplied:
+            try:
+                present = bool(module_available(name))
+                status = "importable" if present else "not_found"
+                item_certainty = "caller_asserted" if present else "verified_unavailable"
+                note = "The caller supplied this lookup; its certainty is asserted by the caller."
+            except Exception:
+                status, item_certainty = "unknown", "unknown"
+                note = "The supplied lookup failed; availability is unknown."
+        else:
+            probe = _safe_module_probe(name)
+            if probe == "discoverable":
+                status = "discoverable"
+                item_certainty = "verified_discoverable_not_import_tested"
+                note = "A module spec is locatable, but the module was not imported; transitive dependencies "
+                "and top-level code are unverified."
+            elif probe == "not_found":
+                status, item_certainty = "not_found", "verified_unavailable"
+                note = "No spec was located by the standard spec-locating finders without executing module code; "
+                "custom import hooks are not consulted."
+            else:
+                status, item_certainty = "unknown", "unknown"
+                note = "Dotted names and transitive imports cannot be checked without executing parent package "
+                "code; availability is unknown."
         module_report.append(
             {
                 "module": name,
                 "status": status,
                 "certainty": item_certainty,
                 "method": method,
+                "import_tested": False,
+                "certainty_note": note,
                 "repair": (
                     "No action needed."
-                    if status == "importable"
+                    if status in ("importable", "discoverable")
                     else "Install this module into Nuke's embedded interpreter (see install.md); "
-                    "this report does not install modules."
+                    "this report does not install or import modules."
                 ),
             }
         )
@@ -187,17 +242,18 @@ def diagnose_dependencies(
 
     issues = []
     for entry in module_report:
-        if entry["status"] != "importable":
-            issues.append(
-                {
-                    "stage": "python_module",
-                    "code": "missing_module" if entry["status"] == "not_found" else "module_check_unknown",
-                    "subject": entry["module"],
-                    "certainty": entry["certainty"],
-                    "facts": {"method": entry["method"]},
-                    "repair": entry["repair"],
-                }
-            )
+        if entry["status"] in ("importable", "discoverable"):
+            continue
+        issues.append(
+            {
+                "stage": "python_module",
+                "code": "missing_module" if entry["status"] == "not_found" else "module_check_unknown",
+                "subject": entry["module"],
+                "certainty": entry["certainty"],
+                "facts": {"method": entry["method"]},
+                "repair": entry["repair"],
+            }
+        )
     issues.extend(node_report)
     if classes and not inventory_available:
         issues.append(
@@ -215,9 +271,17 @@ def diagnose_dependencies(
         counts[issue["certainty"]] += 1
 
     return {
-        "scope": "read-only post-install diagnosis; no install, load, host execution, credential or env access",
+        "scope": "read-only post-install diagnosis; no install, import, load, host execution, credential or env access",
         "interpreter": interpreter,
         "modules": module_report,
+        "module_probe": {
+            "import_tested": False,
+            "module_code_executed": False,
+            "dotted_names": "unknown_without_execution",
+            "transitive_dependencies": "not_checked",
+            "custom_import_hooks": "not_consulted",
+            "spec_locate_only": not supplied,
+        },
         "node_classes": node_report,
         "plugin_kinds_observed": sorted(set(plugin_kinds)),
         "plugin_inventory_available": inventory_available,
@@ -265,6 +329,7 @@ def diagnose_dependencies(
             "credentials_read": False,
             "credentials_printed": False,
             "auto_install_performed": False,
+            "module_code_executed": False,
             "environment_values_returned": False,
             "private_paths_returned": False,
             "host_api_used": "read_only_plugin_inventory" if classes else "none",
@@ -287,7 +352,74 @@ def _sniff(head: bytes) -> str | None:
     return None
 
 
-def _failure_reason(missing, zero, unreadable, frame_limit_exceeded, collapse_warning) -> str:
+def _validate_png(data: bytes) -> tuple[bool, str]:
+    """Validate PNG chunk structure, CRCs and a decompressible IDAT pixel stream.
+
+    Uses only the standard library. A magic number alone is not enough: every
+    chunk length and CRC is checked, IHDR must be the first chunk, IEND must be
+    last, and the IDAT stream must decompress to exactly the expected scanline
+    size. Decompression is bounded so a malformed file cannot consume unbounded
+    memory. This proves the file is decodable, not that Nuke rendered it.
+    """
+    if not data.startswith(_PNG_SIGNATURE):
+        return False, "bad_signature"
+    if len(data) < 8 + 12:
+        return False, "truncated_chunk"
+    offset = 8
+    width = height = bit_depth = color_type = interlace = None
+    idat = bytearray()
+    saw_iend = False
+    while offset + 12 <= len(data):
+        (length,) = struct.unpack(">I", data[offset : offset + 4])
+        kind = data[offset + 4 : offset + 8]
+        if length > len(data) - offset - 12:
+            return False, "truncated_chunk"
+        payload = data[offset + 8 : offset + 8 + length]
+        (crc,) = struct.unpack(">I", data[offset + 8 + length : offset + 12 + length])
+        if zlib.crc32(kind + payload) & 0xFFFFFFFF != crc:
+            return False, "crc_mismatch"
+        if kind == b"IHDR":
+            if offset != 8 or width is not None or length != 13:
+                return False, "invalid_ihdr"
+            width, height, bit_depth, color_type, _compression, _filter, interlace = struct.unpack(">IIBBBBB", payload)
+            if (
+                width <= 0
+                or height <= 0
+                or width > 100000
+                or height > 100000
+                or bit_depth not in _PNG_DEPTHS.get(color_type, ())
+            ):
+                return False, "invalid_ihdr"
+        elif kind == b"IDAT":
+            idat.extend(payload)
+        elif kind == b"IEND":
+            if length != 0:
+                return False, "invalid_iend"
+            saw_iend = True
+            offset += 12 + length
+            break
+        offset += 12 + length
+    if width is None or not idat or not saw_iend or offset != len(data):
+        return False, "missing_required_chunks"
+    if interlace != 0:
+        return False, "unknown:interlaced_not_validated"
+    row_bytes = (width * _PNG_CHANNELS[color_type] * bit_depth + 7) // 8
+    expected = height * (row_bytes + 1)
+    if expected > _MAX_IMAGE_BYTES:
+        return False, "unknown:idat_exceeds_validation_budget"
+    try:
+        decoder = zlib.decompressobj()
+        raw = decoder.decompress(bytes(idat), expected + 1)
+    except (zlib.error, MemoryError, ValueError):
+        return False, "idat_not_decodable"
+    if len(raw) != expected or not decoder.eof:
+        return False, "idat_size_mismatch"
+    if any(raw[row * (row_bytes + 1)] > 4 for row in range(height)):
+        return False, "invalid_filter_type"
+    return True, "decodable"
+
+
+def _failure_reason(missing, zero, unreadable, content_unverified, frame_limit_exceeded, collapse_warning) -> str:
     parts = []
     if collapse_warning:
         parts.append("single-frame output path cannot prove a multi-frame request")
@@ -299,6 +431,8 @@ def _failure_reason(missing, zero, unreadable, frame_limit_exceeded, collapse_wa
         parts.append("zero-byte output files")
     if unreadable:
         parts.append("unreadable or wrong-format output files")
+    if content_unverified:
+        parts.append("image content could not be decode-validated with available decoders")
     return "; ".join(parts) if parts else "no expected frames to check"
 
 
@@ -314,10 +448,12 @@ def verify_render_output(
 ) -> dict[str, Any]:
     """Prove a render's real output files, not merely that execute() returned.
 
-    Confirms actual output existence, the expected frame set, a readable image
-    format and binding to the request. A native ``nuke.execute`` returning is
-    not treated as proof. This is a filesystem readback only; it is never
-    native Nuke render acceptance and mock/temp fixtures do not prove a render.
+    Confirms actual output existence, the expected frame set, format binding
+    and (for PNG) a decode-validated file. Formats with no decoder here are
+    signature-only: their content acceptance stays unknown and ``verified``
+    stays false. A native ``nuke.execute`` returning is not treated as proof.
+    This is a filesystem readback only; it is never native Nuke render
+    acceptance and mock/temp fixtures do not prove a render.
     """
     for name, value in (
         ("first_frame", first_frame),
@@ -354,18 +490,21 @@ def verify_render_output(
         raise ValueError("dynamic sequence basename cannot be verified exhaustively")
     mode = "sequence" if is_sequence else "single_frame"
 
+    # Count arithmetically before allocating: len(range(...)) overflows for
+    # very large bounds, and list(range(...)) materializes every frame before
+    # max_frames is applied. islice keeps materialization bounded to max_frames.
+    requested_count = (last_frame - first_frame) // step + 1
+    frame_limit_exceeded = requested_count > max_frames
     requested_range = range(first_frame, last_frame + 1, step)
-    requested_frames = list(requested_range)
-    frame_limit_exceeded = len(requested_frames) > max_frames
-    if frame_limit_exceeded:
-        requested_frames = requested_frames[:max_frames]
+    requested_frames = list(itertools.islice(requested_range, max_frames))
     # A literal path (no frame token) collapses a multi-frame range into one
     # file; only the final frame can survive. Report this instead of claiming
     # that every requested frame was written.
     checked_frames = [last_frame] if not is_sequence else requested_frames
-    collapse_warning = not is_sequence and len(requested_range) > 1
+    collapse_warning = not is_sequence and requested_count > 1
 
     present, missing, zero, unreadable, detected = [], [], [], [], {}
+    content_unverified, content_checks = [], {}
     for frame in checked_frames:
         name = (
             basename
@@ -377,28 +516,63 @@ def verify_render_output(
             if not os.path.isfile(path):
                 missing.append(frame)
                 continue
-            if os.path.getsize(path) <= 0:
+            size = os.path.getsize(path)
+            if size <= 0:
                 present.append(frame)
                 zero.append(frame)
                 continue
             with open(path, "rb") as handle:
-                head = handle.read(8)
+                data = handle.read(_MAX_IMAGE_BYTES + 1)
         except OSError:
             missing.append(frame)
             continue
         present.append(frame)
-        kind = _sniff(head)
+        kind = _sniff(data[:8])
         detected[str(frame)] = kind or "unrecognized"
-        if fmt is not None and kind != fmt:
+        if (fmt is not None and kind != fmt) or (fmt is None and kind is None):
             unreadable.append(frame)
-        elif fmt is None and kind is None:
-            unreadable.append(frame)
+            content_checks[str(frame)] = "not_checked:format_mismatch_or_unrecognized"
+            continue
+        if size > _MAX_IMAGE_BYTES:
+            content_unverified.append(frame)
+            content_checks[str(frame)] = "unknown:exceeds_validation_budget"
+            continue
+        if kind in _CONTENT_DECODERS:
+            decodable, detail = _validate_png(data)
+            if decodable:
+                content_checks[str(frame)] = "decodable"
+            elif detail.startswith("unknown:"):
+                # A decoder capability limit is not proof of a broken file.
+                content_unverified.append(frame)
+                content_checks[str(frame)] = detail
+            else:
+                unreadable.append(frame)
+                content_checks[str(frame)] = "invalid:" + detail
+            continue
+        # No decoder is available for this format. A matching signature proves
+        # only a candidate format; content readability stays unknown.
+        content_unverified.append(frame)
+        content_checks[str(frame)] = "signature_only"
 
+    fully_decoded = (
+        bool(checked_frames)
+        and not content_unverified
+        and all(value == "decodable" for value in content_checks.values())
+    )
+    if fully_decoded:
+        content_validation, content_acceptance = "full_decode", "verified"
+    elif unreadable:
+        content_validation, content_acceptance = "decode_failed", "failed"
+    elif content_unverified:
+        content_validation, content_acceptance = "signature_only", "unknown"
+    else:
+        content_validation, content_acceptance = "not_performed", "unknown"
     verified = (
         bool(checked_frames)
         and not frame_limit_exceeded
         and not collapse_warning
-        and not (missing or zero or unreadable)
+        and not (missing or zero or unreadable or content_unverified)
+        and fully_decoded
     )
     warnings = []
     if collapse_warning:
@@ -423,7 +597,7 @@ def verify_render_output(
             "step": step,
             "expected_format": fmt,
         },
-        "requested_frame_count": len(requested_range),
+        "requested_frame_count": requested_count,
         "expected_frames": checked_frames[:64],
         "expected_frames_truncated": len(checked_frames) > 64,
         "checked_frame_count": len(checked_frames),
@@ -433,14 +607,20 @@ def verify_render_output(
         "missing_frame_count": len(missing),
         "zero_byte_frames": zero[:64],
         "unreadable_frames": unreadable[:64],
+        "content_unverified_frames": content_unverified[:64],
+        "content_checks": dict(list(content_checks.items())[:64]),
+        "content_decoders": list(_CONTENT_DECODERS),
+        "content_validation": content_validation,
+        "content_acceptance": content_acceptance,
         "detected_formats": dict(list(detected.items())[:64]),
         "format_check": "requested_magic_number_verified" if fmt else "magic_number_sniffed",
+        "format_check_note": "Magic numbers identify a candidate format only; content acceptance is reported separately.",
         "warnings": warnings,
         "frame_limit_exceeded": frame_limit_exceeded,
         "max_frames": max_frames,
         "reason": "all expected frames present, nonempty and readable"
         if verified
-        else _failure_reason(missing, zero, unreadable, frame_limit_exceeded, collapse_warning),
+        else _failure_reason(missing, zero, unreadable, content_unverified, frame_limit_exceeded, collapse_warning),
         "scope": "filesystem readback only; NOT native Nuke render acceptance. Mock/fake/temp fixtures prove "
         "the verifier, not a real Nuke render.",
         "native_render_acceptance": "not_performed",
