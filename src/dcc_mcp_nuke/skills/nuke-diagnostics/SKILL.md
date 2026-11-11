@@ -66,7 +66,9 @@ prove (indexed color, interlacing, palettes, unknown ancillary chunks) stay
 with `content_acceptance: "unknown"` and `verified: false`. Content fields are
 group-scoped over the full requested frame set: `full_decode`/`verified`
 require a decodable check for every required frame, so missing or empty
-outputs never make the group content-verified. A filesystem readback is never
+outputs never make the group content-verified. A frame set truncated by
+`max_frames` or collapsed by a literal path is only partially checked, so the
+group stays `unknown` too. A filesystem readback is never
 native Nuke render acceptance.
 
 All probes are read-only. None mutates the script, starts a server, executes

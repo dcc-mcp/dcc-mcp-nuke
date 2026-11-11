@@ -513,7 +513,9 @@ def verify_render_output(
     ``content_validation``/``content_acceptance`` are group-scoped over the
     full requested frame set: ``full_decode``/``verified`` require a decodable
     content check for every required frame, so a missing or empty output can
-    never make the group look content-verified.
+    never make the group look content-verified. A frame set truncated by
+    ``max_frames`` or collapsed by a literal path is only partially checked,
+    so the group stays unverified too.
     This is a filesystem readback only; it is never native Nuke render
     acceptance and mock/temp fixtures do not prove a render.
     """
@@ -620,9 +622,18 @@ def verify_render_output(
     # missing or zero-byte frame continues without an entry. Requiring one
     # check per checked frame prevents all([]) (all missing) or a partial
     # all-decodable set (some missing) from being read as a full decode.
+    # ``checked_frames`` can also be a strict subset of the requested frame
+    # set: max_frames truncates the range, and a literal (frame-token-free)
+    # path collapses a multi-frame request to a single file. In either case
+    # the group was only partially checked, so a group-scoped
+    # full_decode/verified claim would be dishonest even when every checked
+    # frame decodes. Gate the claim on the WHOLE requested frame set having
+    # been checked.
+    full_frame_set_checked = len(checked_frames) == requested_count
     content_checks_complete = len(content_checks) == len(checked_frames)
     fully_decoded = (
         bool(checked_frames)
+        and full_frame_set_checked
         and content_checks_complete
         and not content_unverified
         and all(value == "decodable" for value in content_checks.values())

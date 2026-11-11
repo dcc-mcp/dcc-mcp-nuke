@@ -337,3 +337,7 @@ def test_frame_limit_boundaries_keep_the_failure_semantics(tmp_path):
     assert clamped["verified"] is False
     assert clamped["expected_frames"] == [1, 2]
     assert clamped["checked_frame_count"] == 2
+    # A truncated frame set is only partially checked: the group-scoped fields
+    # must not claim a full decode even though both checked frames decode.
+    assert clamped["content_validation"] != "full_decode"
+    assert clamped["content_acceptance"] != "verified"

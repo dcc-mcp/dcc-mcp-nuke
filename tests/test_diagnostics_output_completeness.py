@@ -145,6 +145,38 @@ def test_zero_byte_output_is_not_full_decode(tmp_path):
     _assert_group_metadata_consistent(result)
 
 
+# --- Regression: a max_frames-truncated frame set is only partially checked ---
+
+
+def test_max_frames_truncation_keeps_group_metadata_partial(tmp_path):
+    # Request five frames but allow only two to be checked. Both checked frames
+    # are genuinely decodable, yet the group (the full requested frame set) was
+    # NOT fully validated, so the group-scoped fields must stay partial/unknown
+    # instead of claiming a full decode or content acceptance.
+    for frame in (1, 2):
+        _write_png(tmp_path / f"shot.{frame:04d}.png")
+    target = tmp_path / "shot.%04d.png"
+    result = verify_render_output(
+        output_path=str(target),
+        first_frame=1,
+        last_frame=5,
+        max_frames=2,
+        expected_format="png",
+    )
+    assert result["requested_frame_count"] == 5
+    assert result["checked_frame_count"] == 2
+    assert result["expected_frames"] == [1, 2]
+    assert result["frame_limit_exceeded"] is True
+    assert result["verified"] is False
+    assert result["content_validation"] != "full_decode"
+    assert result["content_acceptance"] != "verified"
+    assert result["content_acceptance"] == "unknown"
+    # The frames that WERE checked still carry their decodable checks.
+    assert result["content_checks"] == {"1": "decodable", "2": "decodable"}
+    # The shared group-metadata invariant must hold for the truncated result.
+    _assert_group_metadata_consistent(result)
+
+
 # --- Regression guards: valid, invalid and legal-unknown paths stay correct ---
 
 
