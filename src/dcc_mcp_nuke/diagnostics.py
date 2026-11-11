@@ -214,7 +214,12 @@ def diagnose_dependencies(
                     "A module spec is locatable, but the module was not imported; transitive dependencies "
                     "and top-level code are unverified."
                 )
-                repair = "No action needed."
+                repair = (
+                    "A locatable spec only proves discoverability. If importing this module in Nuke's "
+                    "embedded interpreter fails, check its transitive dependencies and the host/embedded "
+                    "Python environment (see install.md). This report does not import or execute module "
+                    "code, so importability is not confirmed."
+                )
             elif probe == "not_found":
                 # A miss by the standard finders is not global unavailability:
                 # a custom finder, cached importer or host plug-in path could
@@ -542,6 +547,52 @@ def _failure_reason(missing, zero, unreadable, content_unverified, frame_limit_e
     if content_unverified:
         parts.append("image content could not be decode-validated with available decoders")
     return "; ".join(parts) if parts else "no expected frames to check"
+
+
+def resolve_output_format(file_type: Any, output_path: Any) -> str | None:
+    """Resolve a provable output image format for ``verify_render_output``.
+
+    Binds a Write node's ``file_type`` when it names a supported image format,
+    or a well-founded path extension when ``file_type`` is empty (the real
+    Write contract). Existing format aliases are honored. A canonical format
+    name is returned only when the format is unambiguous; every unclear case
+    (a named but unsupported ``file_type``, contradictory signals, an absent or
+    unrecognized extension) returns ``None`` so the caller must stay
+    ``unknown`` rather than fall back to unrestricted magic-number sniffing.
+    No file is opened and no image is decoded here.
+    """
+
+    def canonical(value: Any) -> str | None:
+        if not isinstance(value, str):
+            return None
+        raw = value.strip().lower().lstrip(".")
+        if not raw:
+            return None
+        fmt = _FORMAT_ALIASES.get(raw, raw)
+        return fmt if fmt in _FORMATS else None
+
+    ft_named = isinstance(file_type, str) and bool(file_type.strip())
+    ft = canonical(file_type)
+    suffix = ""
+    if isinstance(output_path, str):
+        normalized = output_path.replace("\\", "/")
+        suffix = posixpath.splitext(posixpath.basename(normalized))[1]
+    pt = canonical(suffix)
+
+    # A named but unsupported/unrecognized file_type (e.g. "mov") cannot be
+    # bound to a verifier signature: stay unknown.
+    if ft_named and ft is None:
+        return None
+    # Contradictory explicit signals cannot be resolved without host knowledge.
+    if ft is not None and pt is not None and ft != pt:
+        return None
+    # An explicit, supported file_type is authoritative, including when the
+    # path has no usable extension.
+    if ft is not None:
+        return ft
+    # Empty file_type: infer from a well-founded path extension. An absent or
+    # unrecognized extension is unknown, never "unrestricted format".
+    return pt
 
 
 def verify_render_output(

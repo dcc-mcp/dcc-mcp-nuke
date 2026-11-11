@@ -17,6 +17,7 @@ from dcc_mcp_nuke import diagnostics
 from dcc_mcp_nuke.diagnostics import (
     describe_execution_sources,
     diagnose_dependencies,
+    resolve_output_format,
     verify_render_output,
 )
 
@@ -298,6 +299,40 @@ def test_format_alias_and_magic_number_sniffing(tmp_path):
     assert positive["binding"]["expected_format"] == "png"
     assert positive["verified"] is True
     assert positive["content_acceptance"] == "verified"
+
+
+@pytest.mark.parametrize(
+    ("file_type", "output_path", "expected"),
+    [
+        # Empty file_type: a well-founded path extension decides (real Write
+        # contract), including sequence placeholders and path aliases.
+        (None, "shot.%04d.exr", "exr"),
+        (None, "shot.####.png", "png"),
+        (None, "frame.jpeg", "jpg"),
+        (None, "frame.tiff", "tif"),
+        (None, "frame.dpx", "dpx"),
+        (None, "C:/renders/shot.%04d.png", "png"),
+        ("", "shot.%04d.exr", "exr"),
+        # An explicit, supported file_type is authoritative, including when the
+        # path has no usable extension.
+        ("png", "shot", "png"),
+        ("EXR", "shot.%04d.exr", "exr"),
+        (".PNG", "shot.%04d.png", "png"),
+        ("png", "shot.%04d.png", "png"),
+        ("jpeg", "shot.%04d.jpeg", "jpg"),
+        # Unknown or contradictory signals stay unknown (None), never an
+        # unrestricted "any format" claim.
+        ("mov", "shot.%04d.exr", None),
+        ("sgi", "shot.%04d.png", None),
+        ("png", "shot.%04d.exr", None),
+        (None, "shot", None),
+        (None, "shot.%04d.mov", None),
+        (None, "", None),
+        (3, "shot.%04d.png", "png"),
+    ],
+)
+def test_resolve_output_format_binding(file_type, output_path, expected):
+    assert resolve_output_format(file_type, output_path) == expected
 
 
 def test_literal_path_cannot_prove_a_multi_frame_request(tmp_path):

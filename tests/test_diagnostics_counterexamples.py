@@ -316,6 +316,31 @@ def test_locatable_module_with_broken_transitive_dependency_is_not_importable(tm
     assert "synthetic_broken_dep" not in sys.modules
 
 
+def test_discoverable_repair_hint_is_conditional_not_no_action_needed(tmp_path, monkeypatch):
+    """A locatable spec only proves discoverability, not importability. The
+    repair hint must be conditional (check transitive dependencies / host
+    environment if the import fails), not an unconditional 'No action needed.'
+    that contradicts certainty_note."""
+    package = tmp_path / "synthetic_discoverable_repair"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.delitem(sys.modules, "synthetic_discoverable_repair", raising=False)
+
+    result = diagnose_dependencies(None, required_modules=["synthetic_discoverable_repair"])
+
+    entry = result["modules"][0]
+    assert entry["status"] == "discoverable"
+    assert entry["certainty"] == "verified_discoverable_not_import_tested"
+    assert entry["import_tested"] is False
+    assert "No action needed" not in entry["repair"]
+    assert "transitive" in entry["repair"].lower()
+    assert "import" in entry["repair"].lower()
+    # The hint stays read-only: it must not claim the module was imported.
+    assert result["module_probe"]["import_tested"] is False
+    assert "synthetic_discoverable_repair" not in sys.modules
+
+
 # --- Counter-example 4: bounded range check before any allocation -------------
 
 

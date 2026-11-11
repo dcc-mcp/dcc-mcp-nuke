@@ -44,13 +44,16 @@ from an external CPython, locates module specs without importing or executing
 any module code, and inventories third-party plug-ins without loading them.
 A locatable spec is reported as `discoverable` with `import_tested: false`,
 never as `importable`/`verified`; dotted names and transitive dependencies that
-cannot be checked without running parent-package code stay `unknown`. A miss by
-the standard spec-locating finders also stays `unknown`: custom import hooks,
-cached finders and host plug-in paths are never consulted, so a standard miss
-is not global unavailability. A caller-supplied lookup keeps its own explicit
-certainty. A missing Nuke version contract and third-party ComfyUI reports are
-never turned into a causal claim. The report never installs, loads, or prints
-credentials.
+cannot be checked without running parent-package code stay `unknown`. Its
+`repair` hint is conditional: discoverability alone does not prove
+importability, so if the import fails in Nuke's embedded interpreter the user
+is told to check transitive dependencies and the host environment. It never
+claims "No action needed" for an untested import. A miss by the standard
+spec-locating finders also stays `unknown`: custom import hooks, cached finders
+and host plug-in paths are never consulted, so a standard miss is not global
+unavailability. A caller-supplied lookup keeps its own explicit certainty. A
+missing Nuke version contract and third-party ComfyUI reports are never turned
+into a causal claim. The report never installs, loads, or prints credentials.
 
 Use `nuke_diagnostics__describe_execution_sources` to answer where work runs
 and whether any cloud model, provider, pricing, API key or paid call is added.
@@ -61,9 +64,14 @@ belong to the surrounding MCP host/CLI and are explicitly unknown here. Native
 host verification remains `not_performed`.
 
 Output readback is wired through `nuke_layered_compositing__render_write_node`:
-a returning `nuke.execute` is not proof. For PNG the verifier validates a
-strict, provable subset with the standard library: chunk lengths and CRCs,
-legal IHDR fields, required chunk ordering and bounded IDAT decompression.
+a returning `nuke.execute` is not proof. The verifier binds `expected_format`
+to the Write `file_type` or a well-founded output path extension before any
+file is accepted; an unknown or contradictory format stays `unknown` instead
+of being read as "any format". Magic-number sniffing only confirms a candidate
+format against that binding, never native format acceptance. For PNG the
+verifier validates a strict, provable subset with the standard library: chunk
+lengths and CRCs, legal IHDR fields, required chunk ordering and bounded IDAT
+decompression.
 Unknown critical chunks and illegal structures fail; legal features it cannot
 prove (indexed color, interlacing, palettes, unknown ancillary chunks) stay
 `unknown`, never `verified`. Formats with no decoder here are signature-only,

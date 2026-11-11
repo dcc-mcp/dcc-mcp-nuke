@@ -18,6 +18,8 @@ import pytest
 _PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEklEQVR42mO4Iycnd0eOAUIBACAqBGGFHUPdAAAAAElFTkSuQmCC"
 )
+# A JPEG signature (no decoder here; signature-only, content stays unknown).
+_JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 40
 
 
 class _Knob:
@@ -40,9 +42,9 @@ class _Knob:
         return self.values()[index]
 
 
-def _fake_nuke(monkeypatch, file_path, *, active_path=None, frame_mode="expression", frame="frame"):
+def _fake_nuke(monkeypatch, file_path, *, active_path=None, frame_mode="expression", frame="frame", file_type=None):
     """Install a fake Nuke host whose active filename may differ from `file`."""
-    values = {"file": file_path, "frame_mode": frame_mode, "frame": frame}
+    values = {"file": file_path, "frame_mode": frame_mode, "frame": frame, "file_type": file_type}
     write = MagicMock()
     write.Class.return_value = "Write"
     write.__getitem__.side_effect = lambda name: _Knob(values.get(name))
@@ -50,6 +52,55 @@ def _fake_nuke(monkeypatch, file_path, *, active_path=None, frame_mode="expressi
     nuke.toNode = MagicMock(return_value=write)
     nuke.execute = MagicMock()
     nuke.filename = MagicMock(return_value=file_path if active_path is None else active_path)
+    monkeypatch.setitem(sys.modules, "nuke", nuke)
+    return nuke, write
+
+
+def _callback_nuke(monkeypatch, initial_path, new_path, *, frame_callback="", read_error_knob=None):
+    """Fake Nuke whose ``nuke.filename(node)`` reflects the live ``file`` knob
+    and whose ``execute()`` models a ``beforeRender`` callback changing that
+    knob. In-process fake only; NOT native Nuke render acceptance.
+    """
+    values = {
+        "file": initial_path,
+        "frame_mode": "expression",
+        "frame": "frame",
+        "file_type": "png",
+        "beforeRender": "change the active output path",
+        "beforeFrameRender": frame_callback,
+        "afterFrameRender": "",
+        "afterRender": "",
+    }
+
+    class Knob:
+        def __init__(self, value):
+            self._value = value
+
+        def value(self):
+            return self._value
+
+    class Write:
+        def Class(self):
+            return "Write"
+
+        def __getitem__(self, name):
+            if name == read_error_knob:
+                raise RuntimeError("callback knob unreadable")
+            return Knob(values.get(name))
+
+    write = Write()
+
+    def filename(_node):
+        return values["file"]  # ACTIVE file knob, read live
+
+    def execute(_node, _first, _last, _step):
+        # Model beforeRender running inside execute() and changing the path.
+        values["file"] = new_path
+
+    nuke = ModuleType("nuke")
+    nuke.toNode = lambda _name: write
+    nuke.filename = filename
+    nuke.execute = execute
     monkeypatch.setitem(sys.modules, "nuke", nuke)
     return nuke, write
 
@@ -238,8 +289,11 @@ def test_numeric_enum_frame_mode_is_resolved_without_guessing(monkeypatch, tmp_p
     assert result["postcondition"]["verified"] is True
 
 
-def test_start_at_mapping_uses_the_renumbered_frame(monkeypatch, tmp_path):
-    """start at=1 over timeline 500..501 renders output frames 1..2."""
+def test_start_at_mapping_is_unknown_without_a_proven_sequence_origin(monkeypatch, tmp_path):
+    """`start at` renumbers against the first frame of the clip/sequence, not
+    the first requested frame (Foundry "Changing the Numbering of Rendered
+    Frames"). That origin cannot be proven from the Write node alone, so the
+    mapping stays unknown instead of substituting first_frame for it."""
     module = _load_render_module()
     active = tmp_path / "shot.%04d.png"
     for frame in (1, 2):
@@ -250,8 +304,27 @@ def test_start_at_mapping_uses_the_renumbered_frame(monkeypatch, tmp_path):
     result = module.main.__wrapped__("Final", 500, 501)
 
     verification = result["context"]["output_verification"]
-    assert verification["verified"] is True
-    assert verification["expected_frames"] == [1, 2]
+    assert result["postcondition"]["verified"] is False
+    assert verification["mode"] == "unknown"
+    assert verification["expected_frames"] == []
+
+
+def test_start_at_partial_range_does_not_verify_a_stale_output(monkeypatch, tmp_path):
+    """Fixed clip origin 500, start at=1, a partial request for timeline 505
+    would write output frame 6. A pre-existing shot.0001.png must not make the
+    wrapper report verified=true for the stale frame-1 file."""
+    module = _load_render_module()
+    active = tmp_path / "shot.%04d.png"
+    (tmp_path / "shot.0001.png").write_bytes(_PNG)  # stale output from an earlier render
+
+    _fake_nuke(monkeypatch, str(active), frame_mode="start at", frame=1)
+
+    result = module.main.__wrapped__("Final", 505, 505)
+
+    verification = result["context"]["output_verification"]
+    assert result["postcondition"]["verified"] is False
+    assert verification["mode"] == "unknown"
+    assert verification["expected_frames"] == []
 
 
 def test_start_at_with_non_unit_step_is_unknown(monkeypatch, tmp_path):
@@ -294,3 +367,143 @@ def test_unresolvable_mapping_is_unknown_not_stale_verification(monkeypatch, tmp
     assert verification["content_checks"] == {}
     assert verification["expected_frames"] == []
     assert verification["native_render_acceptance"] == "not_performed"
+
+
+# --- Render callbacks: post-execute active path --------------------------------
+# Fake Nuke host only; NOT native Nuke render acceptance.
+
+
+def test_before_render_path_change_verifies_the_post_execute_output(monkeypatch, tmp_path):
+    """beforeRender runs inside execute() and may change the active path; the
+    wrapper must bind and verify the post-execute path, not the stale one."""
+    module = _load_render_module()
+    old = str(tmp_path / "old.%04d.png")
+    new = str(tmp_path / "new.%04d.png")
+    (tmp_path / "old.0001.png").write_bytes(_PNG)  # stale pre-execute file
+    (tmp_path / "new.0001.png").write_bytes(_PNG)  # real post-callback output
+
+    _callback_nuke(monkeypatch, old, new)
+
+    result = module.main.__wrapped__("Final", 1, 1)
+
+    verification = result["context"]["output_verification"]
+    assert result["context"]["output_path"] == new
+    assert verification["binding"]["output_path"] == new
+    assert result["postcondition"]["verified"] is True
+
+
+def test_stale_pre_execute_path_is_not_verified_when_callback_changes_output(monkeypatch, tmp_path):
+    """A stale pre-execute file must not be accepted when beforeRender moved the
+    active path and the new output is missing."""
+    module = _load_render_module()
+    old = str(tmp_path / "old.%04d.png")
+    new = str(tmp_path / "new.%04d.png")
+    (tmp_path / "old.0001.png").write_bytes(_PNG)  # stale
+    # no new.0001.png: the post-callback output is missing
+
+    _callback_nuke(monkeypatch, old, new)
+
+    result = module.main.__wrapped__("Final", 1, 1)
+
+    verification = result["context"]["output_verification"]
+    assert result["context"]["output_path"] == new
+    assert verification["binding"]["output_path"] == new
+    assert result["postcondition"]["verified"] is False
+    assert verification["missing_frames"] == [1]
+
+
+def test_per_frame_callback_forces_unknown_verification(monkeypatch, tmp_path):
+    """A frame-level callback can select a different path per frame, so one
+    final filename cannot prove the output set; verification stays unknown."""
+    module = _load_render_module()
+    path = str(tmp_path / "shot.%04d.png")
+    (tmp_path / "shot.0001.png").write_bytes(_PNG)
+
+    _callback_nuke(monkeypatch, path, path, frame_callback="select a per-frame path")
+
+    result = module.main.__wrapped__("Final", 1, 1)
+
+    verification = result["context"]["output_verification"]
+    assert verification["mode"] == "unknown"
+    assert result["postcondition"]["verified"] is False
+
+
+def test_unreadable_callback_state_fails_closed_to_unknown(monkeypatch, tmp_path):
+    """An unreadable callback knob must not be treated as 'no callbacks';
+    verification fails closed to unknown."""
+    module = _load_render_module()
+    path = str(tmp_path / "shot.%04d.png")
+    (tmp_path / "shot.0001.png").write_bytes(_PNG)
+
+    _callback_nuke(monkeypatch, path, path, read_error_knob="beforeFrameRender")
+
+    result = module.main.__wrapped__("Final", 1, 1)
+
+    assert result["context"]["output_verification"]["mode"] == "unknown"
+    assert result["postcondition"]["verified"] is False
+
+
+# --- Output format binding -----------------------------------------------------
+# Fake Nuke host only; NOT native Nuke render acceptance.
+
+
+def test_exr_path_with_png_bytes_is_not_verified(monkeypatch, tmp_path):
+    """A PNG at an .exr output path must not be claimed verified: the wrapper
+    binds expected_format to the effective output format (exr)."""
+    module = _load_render_module()
+    active = tmp_path / "shot.%04d.exr"
+    (tmp_path / "shot.0001.exr").write_bytes(_PNG)  # wrong-format file
+
+    _fake_nuke(monkeypatch, str(active))
+
+    result = module.main.__wrapped__("Final", 1, 1)
+
+    verification = result["context"]["output_verification"]
+    assert result["postcondition"]["verified"] is False
+    assert verification["binding"]["expected_format"] == "exr"
+    assert verification["unreadable_frames"] == [1]
+
+
+def test_conflicting_file_type_and_path_stays_unknown(monkeypatch, tmp_path):
+    """file_type and the path extension disagree; the format is not provable,
+    so verification stays unknown instead of falling back to magic sniffing."""
+    module = _load_render_module()
+    active = tmp_path / "shot.%04d.exr"
+    (tmp_path / "shot.0001.exr").write_bytes(_PNG)
+
+    _fake_nuke(monkeypatch, str(active), file_type="png")
+
+    result = module.main.__wrapped__("Final", 1, 1)
+
+    assert result["context"]["output_verification"]["mode"] == "unknown"
+    assert result["postcondition"]["verified"] is False
+
+
+def test_unknown_output_format_stays_unknown(monkeypatch, tmp_path):
+    """No recognizable format (empty file_type, no path extension): unknown,
+    never unrestricted magic-number sniffing."""
+    module = _load_render_module()
+    active = tmp_path / "shot"
+    (tmp_path / "shot").write_bytes(_PNG)
+
+    _fake_nuke(monkeypatch, str(active))
+
+    result = module.main.__wrapped__("Final", 1, 1)
+
+    assert result["context"]["output_verification"]["mode"] == "unknown"
+    assert result["postcondition"]["verified"] is False
+
+
+def test_format_alias_is_normalized_for_binding(monkeypatch, tmp_path):
+    """The jpeg alias is normalized to jpg when binding expected_format."""
+    module = _load_render_module()
+    active = tmp_path / "shot.%04d.jpeg"
+    (tmp_path / "shot.0001.jpeg").write_bytes(_JPEG)
+
+    _fake_nuke(monkeypatch, str(active), file_type="jpeg")
+
+    result = module.main.__wrapped__("Final", 1, 1)
+
+    verification = result["context"]["output_verification"]
+    assert verification["binding"]["expected_format"] == "jpg"
+    assert result["postcondition"]["verified"] is False  # jpg is signature-only
