@@ -30,6 +30,7 @@ import posixpath
 import re
 import struct
 import sys
+import zipimport
 import zlib
 from pathlib import Path
 from typing import Any, Callable
@@ -70,7 +71,8 @@ def _safe_module_probe(name: str) -> str:
     ``importlib.util.find_spec("parent.child")`` imports ``parent`` and runs
     its ``__init__.py``; a diagnosis must never execute the code it inspects.
     Dotted names are therefore reported as unknown. For a single-segment name
-    only the standard spec-locating finders are consulted. A locatable spec
+    only explicit standard filesystem/zip finders are consulted, bypassing
+    path hooks and cached custom finders. A locatable spec
     means "discoverable", not "import tested": importing can still fail on a
     missing transitive dependency or on top-level code.
     """
@@ -82,8 +84,27 @@ def _safe_module_probe(name: str) -> str:
         for finder in (importlib.machinery.BuiltinImporter, importlib.machinery.FrozenImporter):
             if finder.find_spec(name) is not None:
                 return "discoverable"
-        if importlib.machinery.PathFinder.find_spec(name) is not None:
-            return "discoverable"
+        loaders = (
+            (importlib.machinery.ExtensionFileLoader, importlib.machinery.EXTENSION_SUFFIXES),
+            (importlib.machinery.SourceFileLoader, importlib.machinery.SOURCE_SUFFIXES),
+            (importlib.machinery.SourcelessFileLoader, importlib.machinery.BYTECODE_SUFFIXES),
+        )
+        for entry in sys.path:
+            if not isinstance(entry, str):
+                continue
+            if importlib.machinery.FileFinder(entry, *loaders).find_spec(name) is not None:
+                return "discoverable"
+            try:
+                finder = zipimport.zipimporter(entry)
+            except zipimport.ZipImportError:
+                continue
+            if hasattr(finder, "find_spec"):
+                found = finder.find_spec(name) is not None
+            else:  # Python 3.9 zipimporters predate find_spec().
+                loader, namespace_paths = finder.find_loader(name)
+                found = loader is not None or bool(namespace_paths)
+            if found:
+                return "discoverable"
         return "not_found"
     except Exception:
         return "unknown"
@@ -378,6 +399,7 @@ def _validate_png(data: bytes) -> tuple[bool, str]:
     width = height = bit_depth = color_type = interlace = None
     idat = bytearray()
     saw_plte = saw_idat = saw_iend = False
+    idat_closed = False
     unvalidated_ancillary = False
     while offset + 12 <= len(data):
         (length,) = struct.unpack(">I", data[offset : offset + 4])
@@ -431,6 +453,8 @@ def _validate_png(data: bytes) -> tuple[bool, str]:
         elif kind == b"IDAT":
             if width is None:
                 return False, "invalid_chunk_order"
+            if idat_closed:
+                return False, "non_consecutive_idat"
             idat.extend(payload)
             saw_idat = True
         elif kind == b"IEND":
@@ -439,11 +463,10 @@ def _validate_png(data: bytes) -> tuple[bool, str]:
             saw_iend = True
             offset += 12 + length
             break
-        elif saw_idat:
-            # IDAT chunks must be consecutive; no intervening chunk is legal.
-            return False, "non_consecutive_idat"
         else:
             unvalidated_ancillary = True
+            # Ancillary chunks may follow the final IDAT, but IDAT cannot resume.
+            idat_closed = saw_idat
         offset += 12 + length
     if width is None or not idat or not saw_iend or offset != len(data):
         return False, "missing_required_chunks"

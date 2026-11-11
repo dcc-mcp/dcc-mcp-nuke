@@ -12,6 +12,7 @@ import builtins
 import importlib.machinery
 import struct
 import sys
+import zipfile
 import zlib
 
 import pytest
@@ -182,8 +183,10 @@ def test_legal_indexed_png_is_unknown_not_claimed_decodable(tmp_path):
     assert result["content_checks"]["1"] == "unknown:indexed_color_not_validated"
 
 
-def test_unknown_ancillary_chunk_is_unknown_not_claimed_decodable(tmp_path):
-    payload = _png_from(_ihdr(), extra=_chunk(b"tEXt", b"Comment\x00hello"))
+@pytest.mark.parametrize("after_idat", [False, True])
+def test_unknown_ancillary_chunk_is_unknown_not_claimed_decodable(tmp_path, after_idat):
+    text_chunk = _chunk(b"tEXt", b"Comment\x00hello")
+    payload = _VALID_PNG[:-12] + text_chunk + _VALID_PNG[-12:] if after_idat else _png_from(_ihdr(), extra=text_chunk)
     target = tmp_path / "ancillary.png"
     target.write_bytes(payload)
     result = verify_render_output(output_path=str(target), first_frame=1, last_frame=1, expected_format="png")
@@ -245,6 +248,46 @@ def test_dotted_module_probe_does_not_execute_parent_package(tmp_path, monkeypat
 
 
 # --- Counter-example 3: discoverable is not import-tested ---------------------
+
+
+@pytest.mark.parametrize("cached", [False, True])
+def test_module_probe_does_not_invoke_custom_path_importers(tmp_path, monkeypatch, cached):
+    calls = []
+
+    class CustomFinder:
+        def find_spec(self, fullname, target=None):
+            calls.append(fullname)
+            return None
+
+    def custom_hook(path):
+        calls.append(path)
+        raise ImportError
+
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setattr(sys, "path_hooks", [custom_hook, *sys.path_hooks])
+    if cached:
+        monkeypatch.setitem(sys.path_importer_cache, str(tmp_path), CustomFinder())
+    else:
+        monkeypatch.delitem(sys.path_importer_cache, str(tmp_path), raising=False)
+
+    result = diagnose_dependencies(None, required_modules=["synthetic_missing_hook_probe"])
+
+    assert calls == [], "read-only diagnosis invoked a custom import hook or cached finder"
+    assert result["modules"][0]["status"] == "not_found"
+    assert result["module_probe"]["custom_import_hooks"] == "not_consulted"
+
+
+def test_module_probe_discovers_zip_package_without_executing_it(tmp_path, monkeypatch):
+    archive = tmp_path / "dependencies.zip"
+    with zipfile.ZipFile(archive, "w") as handle:
+        handle.writestr("synthetic_zip_probe/__init__.py", "raise RuntimeError('must not execute')\n")
+    monkeypatch.syspath_prepend(str(archive))
+
+    result = diagnose_dependencies(None, required_modules=["synthetic_zip_probe"])
+
+    assert result["modules"][0]["status"] == "discoverable"
+    assert result["modules"][0]["import_tested"] is False
+    assert "synthetic_zip_probe" not in sys.modules
 
 
 def test_locatable_module_with_broken_transitive_dependency_is_not_importable(tmp_path, monkeypatch):
