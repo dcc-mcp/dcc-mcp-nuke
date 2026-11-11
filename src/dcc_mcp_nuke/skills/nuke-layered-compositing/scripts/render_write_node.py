@@ -16,6 +16,20 @@ well-founded path extension before any file is accepted: a readable, empty
 unknown because the real value could override the path suffix. Unresolvable
 mappings, callback-driven path sets and unknown formats stay unknown rather
 than being checked against stale or wrong-format files.
+
+Nuke also runs render callbacks registered process-wide through ``nuke.add*``
+in ``init.py``/``menu.py``. They are separate from the four Write-node knobs,
+run during ``execute()``, cannot be enumerated from the host, and any render
+script may register and remove temporary global callbacks while ``execute()``
+runs. Empty callback-knob snapshots on either side therefore cannot prove that
+no callback changed the output path set. The wrapper reads the Write ``file``
+knob before and after ``execute()``: if that baseline changed across the render
+and the change is not attributable to a single ``beforeRender`` script (which
+runs once before rendering), or the baseline cannot be read, verification stays
+unknown instead of verifying one final filename. This is a conservative host
+limitation, not a render failure: the readback never executes or parses
+callback scripts, while the render invoked through ``nuke.execute`` still runs
+configured callbacks.
 """
 
 from __future__ import annotations
@@ -41,6 +55,21 @@ _INTEGER = re.compile(r"^[+-]?\d+$")
 # the render, so one final filename cannot prove the whole output set.
 _RENDER_CALLBACK_KNOBS = ("beforeRender", "beforeFrameRender", "afterFrameRender", "afterRender")
 _MULTI_PATH_CALLBACK_KNOBS = ("beforeFrameRender", "afterFrameRender", "afterRender")
+
+# Nuke exposes no public API to enumerate render callbacks registered
+# process-wide with nuke.add*, and any script can register/remove temporary
+# global callbacks during execute(). Empty before/after knob snapshots alone
+# cannot prove the output path set, so an unprovable callback context keeps
+# verification unknown instead of verifying one final filename.
+_UNREADABLE = object()
+_UNPROVABLE_CALLBACK_CONTEXT = (
+    "the effective render callback context and output path set cannot be proven "
+    "from the host: globally registered render callbacks (nuke.add*) and "
+    "temporary callbacks registered during execute are not enumerable, empty "
+    "Write-node callback knobs before and after execute cannot rule out a "
+    "callback that changed the active file path, so one final filename cannot "
+    "prove the complete rendered output set"
+)
 
 
 def _unknown_verification(reason: str) -> dict[str, Any]:
@@ -205,8 +234,24 @@ def _callback_state_snapshot(node: Any) -> dict[str, bool] | None:
         return None
 
 
+def _write_file_knob(node: Any) -> Any:
+    """Read the Write ``file`` knob as a read-only, frame-independent baseline.
+
+    ``nuke.filename(node)`` is the active (possibly proxy) output path and may
+    resolve sequence placeholders against the current frame, so it is not a
+    stable baseline across ``execute()``. The raw ``file`` knob holds the path
+    template and lets the wrapper detect a callback that repointed the output
+    during the render without executing, parsing or hooking any script. A read
+    failure returns a sentinel so the caller fails closed to ``unknown``.
+    """
+    try:
+        return node["file"].value()
+    except Exception:
+        return _UNREADABLE
+
+
 def _active_output_path_after_execute(
-    nuke: Any, node: Any, pre_callback_state: dict[str, bool] | None
+    nuke: Any, node: Any, pre_callback_state: dict[str, bool] | None, pre_file_knob: Any
 ) -> tuple[str | None, str | None]:
     """Resolve the active Write filename AFTER ``nuke.execute`` returned.
 
@@ -218,6 +263,14 @@ def _active_output_path_after_execute(
     ``beforeRender`` makes at most one path change, which the post-execute
     active filename captures, so its presence alone does not force unknown.
     Render callback scripts are inspected but never executed or parsed.
+
+    ``pre_file_knob`` is the Write ``file`` knob baseline read BEFORE execute.
+    Globally registered render callbacks (``nuke.add*``) and temporary
+    callbacks registered/removed during execute are not enumerable from the
+    host, so empty before/after knob snapshots cannot prove the output path
+    set: a ``file`` knob that changed across execute without a provable single
+    ``beforeRender`` source, or that cannot be read on either side, keeps
+    verification unknown instead of verifying one final filename.
     """
     post_callback_state = _callback_state_snapshot(node)
     if pre_callback_state is None or post_callback_state is None:
@@ -227,8 +280,6 @@ def _active_output_path_after_execute(
             "a per-frame or afterRender callback present before or after execute can change the output path; "
             "one final filename cannot prove the rendered output set"
         )
-    # beforeRender runs once before rendering starts; reading the active
-    # filename now captures its single changed path.
     filename_api = getattr(nuke, "filename", None)
     if not callable(filename_api):
         return None, "nuke.filename(node) is unavailable after execute"
@@ -238,6 +289,15 @@ def _active_output_path_after_execute(
         return None, "active Write filename could not be read after execute"
     if not isinstance(output_path, str) or not output_path:
         return None, "active Write filename could not be resolved after execute"
+
+    post_file_knob = _write_file_knob(node)
+    if pre_file_knob is _UNREADABLE or post_file_knob is _UNREADABLE:
+        return output_path, _UNPROVABLE_CALLBACK_CONTEXT
+    before_render_set = pre_callback_state["beforeRender"] or post_callback_state["beforeRender"]
+    if pre_file_knob != post_file_knob and not before_render_set:
+        return output_path, _UNPROVABLE_CALLBACK_CONTEXT
+    # beforeRender runs once before rendering starts; its single changed path is
+    # captured by the post-execute active filename read above.
     return output_path, None
 
 
@@ -257,14 +317,16 @@ def main(write_node: str, first_frame: int, last_frame: int, step: int = 1, **_k
         return skill_error("Write node not found", write_node)
     first, last, incr = int(first_frame), int(last_frame), int(step)
 
-    # Snapshot callback state BEFORE execute: a callback present now but that
-    # clears itself during the render cannot be ruled out by a post-only read.
+    # Snapshot callback state and the raw ``file`` knob BEFORE execute: a
+    # callback present now but that clears itself (or repoints ``file`` and
+    # restores it) during the render cannot be ruled out by a post-only read.
     pre_callback_state = _callback_state_snapshot(node)
+    pre_file_knob = _write_file_knob(node)
     nuke.execute(node, first, last, incr)
     # execute() returning is not proof that files exist. Report a separate,
     # explicit filesystem readback so a successful call cannot be mistaken for
     # verified output. This is not native Nuke render acceptance.
-    output_path, path_reason = _active_output_path_after_execute(nuke, node, pre_callback_state)
+    output_path, path_reason = _active_output_path_after_execute(nuke, node, pre_callback_state, pre_file_knob)
     mapping = _output_frame_bounds(node, first, last)
     observed_file_type = _file_type_name(node)
     # None means the file_type knob is UNREADABLE, not empty: the real value could

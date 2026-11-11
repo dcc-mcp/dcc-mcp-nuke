@@ -181,6 +181,67 @@ def _self_clearing_callback_nuke(monkeypatch, actual_path, stale_path):
     return nuke, write
 
 
+def _registered_global_callback_nuke(monkeypatch, actual_path, stale_path, *, unreadable_file_knob=False):
+    """Fake Nuke modeling a render callback registered process-wide through
+    ``nuke.add*`` (e.g. ``nuke.addBeforeFrameRender``), NOT one of the four
+    Write-node callback knobs. All four knobs stay empty, but during
+    ``execute()`` the registered callback repoints the active ``file`` knob to
+    a pre-existing, decodable stale PNG. A post-only (or empty before/after)
+    knob snapshot cannot see this callback; the changed raw ``file`` knob is
+    the only observable signal.
+
+    ``unreadable_file_knob`` models a callback context whose read-only
+    baseline cannot be established at all, which must also fail closed.
+
+    In-process fake only; NOT native Nuke render acceptance. No host is
+    launched and no user callback is executed or parsed: the repoint is a
+    plain assignment and the empty knob strings are merely inspected.
+    """
+    values = {
+        "file": actual_path,
+        "frame_mode": "expression",
+        "frame": "frame",
+        "file_type": "png",
+        "beforeRender": "",
+        "beforeFrameRender": "",
+        "afterFrameRender": "",
+        "afterRender": "",
+    }
+
+    class Knob:
+        def __init__(self, value):
+            self._value = value
+
+        def value(self):
+            return self._value
+
+    class Write:
+        def Class(self):
+            return "Write"
+
+        def __getitem__(self, name):
+            if name == "file" and unreadable_file_knob:
+                raise RuntimeError("file knob unreadable")
+            return Knob(values.get(name))
+
+    write = Write()
+
+    def filename(_node):
+        return values["file"]  # ACTIVE file knob, read live
+
+    def execute(_node, _first, _last, _step):
+        # A globally registered render callback repoints `file` to a stale,
+        # decodable output while the four Write knobs stay empty.
+        values["file"] = stale_path
+
+    nuke = ModuleType("nuke")
+    nuke.toNode = lambda _name: write
+    nuke.filename = filename
+    nuke.execute = execute
+    monkeypatch.setitem(sys.modules, "nuke", nuke)
+    return nuke, write
+
+
 def _load_render_module():
     path = (
         Path(__file__).parent.parent
@@ -546,6 +607,53 @@ def test_self_clearing_after_render_callback_does_not_verify_stale_output(monkey
     # The stale decodable file exists; it must never be accepted as proof. The
     # unknown verdict must come from the callback, not an unrelated gate.
     assert "callback" in verification["reason"]
+
+
+@pytest.mark.parametrize(
+    "unreadable_file_knob",
+    [
+        pytest.param(False, id="global_callback_repoints_to_stale"),
+        pytest.param(True, id="callback_context_unreadable"),
+    ],
+)
+def test_registered_global_callback_forces_unknown_verification(monkeypatch, tmp_path, unreadable_file_knob):
+    """Four empty Write knobs do NOT prove no global render callback exists.
+
+    A callback registered with ``nuke.add*`` (or a temporary handler a
+    ``beforeRender`` script registers and removes during execute) can repoint
+    ``file`` to a pre-existing decodable PNG. Nuke has no public API to
+    enumerate registered handlers, so the wrapper must fail closed to
+    ``unknown`` instead of verifying the single final filename. The second
+    case covers an unreadable callback context (``file`` knob baseline cannot
+    be read): verification also stays ``unknown``, not a render failure.
+
+    In-process fake; NOT native Nuke acceptance, no host launched, no user
+    callback executed or parsed.
+    """
+    module = _load_render_module()
+    actual = str(tmp_path / "actual.%04d.png")
+    stale = str(tmp_path / "stale.%04d.png")
+    (tmp_path / "stale.0001.png").write_bytes(_PNG)  # stale pre-existing decodable output
+
+    _registered_global_callback_nuke(monkeypatch, actual, stale, unreadable_file_knob=unreadable_file_knob)
+
+    result = module.main.__wrapped__("Final", 1, 1)
+
+    verification = result["context"]["output_verification"]
+    assert result["success"] is True  # a render, not an invented failure
+    assert result["postcondition"]["verified"] is False
+    assert verification["mode"] == "unknown"
+    assert verification["content_validation"] == "not_performed"
+    assert verification["content_acceptance"] == "unknown"
+    assert verification["content_checks"] == {}
+    assert verification["expected_frames"] == []
+    assert verification["native_render_acceptance"] == "not_performed"
+    assert "callback" in verification["reason"]
+    # The stale decodable file exists at the repointed active path; it must
+    # never be accepted as proof of this render.
+    assert (tmp_path / "stale.0001.png").read_bytes() == _PNG
+    if not unreadable_file_knob:
+        assert result["context"]["output_path"] == stale
 
 
 # --- Output format binding -----------------------------------------------------

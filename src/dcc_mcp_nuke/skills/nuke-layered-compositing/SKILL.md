@@ -33,8 +33,18 @@ changed the path; the `file` knob is not used as the output path. Callback
 state is combined from BEFORE and AFTER execute, so a per-frame or
 `afterRender` callback that was set before the render but cleared itself during
 it (or an unreadable callback knob) cannot be ruled out: one final filename
-cannot prove the whole output set, verification stays `unknown`, and no script
-is executed or parsed. Write frame renumbering is resolved by arithmetic only
+cannot prove the whole output set and verification stays `unknown`. Nuke also
+runs render callbacks registered process-wide with `nuke.add*` in `init.py` or
+`menu.py`; these are separate from the Write-node knobs, run during
+`execute()`, and cannot be enumerated from the host. Any script may register
+and remove temporary global callbacks while `execute()` runs, so empty
+before/after knob snapshots alone do not prove a stable output path set. The
+wrapper reads the raw Write `file` knob before and after `execute()`: a change
+that is not attributable to a single `beforeRender` path edit, or a baseline
+that cannot be read, keeps verification `unknown` rather than verifying one
+final file. The readback never executes or parses callback scripts; the render
+invoked through `nuke.execute` still runs configured callbacks. Write frame
+renumbering is resolved by arithmetic only
 for the identity `expression` and integer `offset` mappings; `start at`
 renumbers against the first frame of the clip/sequence, which cannot be proven
 from the Write node alone, so it stays explicitly `unknown` rather than
