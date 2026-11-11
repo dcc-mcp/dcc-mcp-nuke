@@ -57,10 +57,14 @@ belong to the surrounding MCP host/CLI and are explicitly unknown here. Native
 host verification remains `not_performed`.
 
 Output readback is wired through `nuke_layered_compositing__render_write_node`:
-a returning `nuke.execute` is not proof. For PNG the verifier checks real chunk
-structure, CRCs and IDAT decodability with the standard library. Formats with
-no decoder here are signature-only, with `content_acceptance: "unknown"` and
-`verified: false`. A filesystem readback is never native Nuke render acceptance.
+a returning `nuke.execute` is not proof. For PNG the verifier validates a
+strict, provable subset with the standard library: chunk lengths and CRCs,
+legal IHDR fields, required chunk ordering and bounded IDAT decompression.
+Unknown critical chunks and illegal structures fail; legal features it cannot
+prove (indexed color, interlacing, palettes, unknown ancillary chunks) stay
+`unknown`, never `verified`. Formats with no decoder here are signature-only,
+with `content_acceptance: "unknown"` and `verified: false`. A filesystem
+readback is never native Nuke render acceptance.
 
 All probes are read-only. None mutates the script, starts a server, executes
 user module code, reads credentials, or makes a network or paid call.

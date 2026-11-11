@@ -12,9 +12,13 @@ no private absolute path is exposed. ``verify_render_output`` only inspects
 files that already exist on disk, so a passing check is never native Nuke
 render acceptance and mock/fake/temp fixtures cannot prove a real render.
 
-PNG outputs are checked for real chunk structure, CRCs and IDAT decodability
-using the standard library. Formats without a decoder here are reported as
-signature-only with unknown content acceptance, never as readable/verified.
+PNG outputs are validated against a strict, provable subset using only the
+standard library: chunk lengths/CRCs, legal IHDR fields, required chunk
+ordering and a bounded IDAT decompression. Unknown critical chunks and illegal
+structures fail; legal features this validator cannot prove (indexed color,
+interlacing, palettes, unknown ancillary chunks) are unknown. Neither is
+reported as content-verified. Formats without a decoder here stay
+signature-only with unknown content acceptance.
 """
 
 from __future__ import annotations
@@ -46,6 +50,8 @@ _FORMAT_ALIASES = {"jpeg": "jpg", "tiff": "tif"}
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _PNG_CHANNELS = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}
 _PNG_DEPTHS = {0: (1, 2, 4, 8, 16), 2: (8, 16), 3: (1, 2, 4, 8), 4: (8, 16), 6: (8, 16)}
+_PNG_KNOWN_CRITICAL = (b"IHDR", b"PLTE", b"IDAT", b"IEND")
+_PNG_MAX_PLTE_BYTES = 3 * 256
 _CONTENT_DECODERS = ("png",)
 _MAX_IMAGE_BYTES = 64 * 1024 * 1024
 # Mirrors file_references._SEQUENCE so substitution stays consistent with the
@@ -353,13 +359,16 @@ def _sniff(head: bytes) -> str | None:
 
 
 def _validate_png(data: bytes) -> tuple[bool, str]:
-    """Validate PNG chunk structure, CRCs and a decompressible IDAT pixel stream.
+    """Validate a strict, provable PNG subset using only the standard library.
 
-    Uses only the standard library. A magic number alone is not enough: every
-    chunk length and CRC is checked, IHDR must be the first chunk, IEND must be
-    last, and the IDAT stream must decompress to exactly the expected scanline
-    size. Decompression is bounded so a malformed file cannot consume unbounded
-    memory. This proves the file is decodable, not that Nuke rendered it.
+    A magic number alone is never enough. Chunk lengths/CRCs, IHDR fields,
+    chunk ordering and a bounded IDAT decompression are checked. Only a
+    non-interlaced, non-palette image with compression/filter method 0 and no
+    unvalidated chunk can be claimed decodable. Unknown critical chunks and
+    illegal structures are hard failures; legal features this validator cannot
+    prove (indexed color, interlacing, palettes, unknown ancillary chunks) are
+    reported as unknown. Neither is content-verified. This proves decodability
+    of the byte stream, not that Nuke rendered it or that pixels are correct.
     """
     if not data.startswith(_PNG_SIGNATURE):
         return False, "bad_signature"
@@ -368,7 +377,8 @@ def _validate_png(data: bytes) -> tuple[bool, str]:
     offset = 8
     width = height = bit_depth = color_type = interlace = None
     idat = bytearray()
-    saw_iend = False
+    saw_plte = saw_idat = saw_iend = False
+    unvalidated_ancillary = False
     while offset + 12 <= len(data):
         (length,) = struct.unpack(">I", data[offset : offset + 4])
         kind = data[offset + 4 : offset + 8]
@@ -378,31 +388,71 @@ def _validate_png(data: bytes) -> tuple[bool, str]:
         (crc,) = struct.unpack(">I", data[offset + 8 + length : offset + 12 + length])
         if zlib.crc32(kind + payload) & 0xFFFFFFFF != crc:
             return False, "crc_mismatch"
+        if not all(65 <= byte <= 90 or 97 <= byte <= 122 for byte in kind):
+            return False, "invalid_chunk_type"
+        # An uppercase first type byte marks a critical chunk. Unknown critical
+        # chunks must not be ignored; unknown ancillary chunks are legal but
+        # outside the subset this validator can prove.
+        critical = not (kind[0] & 0x20)
+        if critical and kind not in _PNG_KNOWN_CRITICAL:
+            return False, "unknown_critical_chunk"
         if kind == b"IHDR":
             if offset != 8 or width is not None or length != 13:
                 return False, "invalid_ihdr"
-            width, height, bit_depth, color_type, _compression, _filter, interlace = struct.unpack(">IIBBBBB", payload)
+            width, height, bit_depth, color_type, compression, filter_method, interlace = struct.unpack(
+                ">IIBBBBB", payload
+            )
             if (
                 width <= 0
                 or height <= 0
                 or width > 100000
                 or height > 100000
-                or bit_depth not in _PNG_DEPTHS.get(color_type, ())
+                or color_type not in _PNG_CHANNELS
+                or bit_depth not in _PNG_DEPTHS[color_type]
+                or compression != 0
+                or filter_method != 0
+                or interlace not in (0, 1)
             ):
                 return False, "invalid_ihdr"
+        elif kind == b"PLTE":
+            if saw_idat:
+                return False, "non_consecutive_idat"
+            if (
+                width is None
+                or saw_plte
+                or length == 0
+                or length % 3
+                or length > _PNG_MAX_PLTE_BYTES
+                or color_type in (0, 4)
+                or (color_type == 3 and length > (1 << bit_depth) * 3)
+            ):
+                return False, "invalid_plte"
+            saw_plte = True
         elif kind == b"IDAT":
+            if width is None:
+                return False, "invalid_chunk_order"
             idat.extend(payload)
+            saw_idat = True
         elif kind == b"IEND":
-            if length != 0:
+            if length != 0 or not saw_idat:
                 return False, "invalid_iend"
             saw_iend = True
             offset += 12 + length
             break
+        elif saw_idat:
+            # IDAT chunks must be consecutive; no intervening chunk is legal.
+            return False, "non_consecutive_idat"
+        else:
+            unvalidated_ancillary = True
         offset += 12 + length
     if width is None or not idat or not saw_iend or offset != len(data):
         return False, "missing_required_chunks"
-    if interlace != 0:
+    if interlace == 1:
         return False, "unknown:interlaced_not_validated"
+    # Indexed color requires PLTE. Even with a legal palette, palette index
+    # semantics are not decoded here, so this subset stays unknown.
+    if color_type == 3 and not saw_plte:
+        return False, "missing_required_palette"
     row_bytes = (width * _PNG_CHANNELS[color_type] * bit_depth + 7) // 8
     expected = height * (row_bytes + 1)
     if expected > _MAX_IMAGE_BYTES:
@@ -416,6 +466,12 @@ def _validate_png(data: bytes) -> tuple[bool, str]:
         return False, "idat_size_mismatch"
     if any(raw[row * (row_bytes + 1)] > 4 for row in range(height)):
         return False, "invalid_filter_type"
+    if color_type == 3:
+        return False, "unknown:indexed_color_not_validated"
+    if saw_plte:
+        return False, "unknown:palette_chunk_not_validated"
+    if unvalidated_ancillary:
+        return False, "unknown:ancillary_chunk_not_validated"
     return True, "decodable"
 
 
@@ -449,9 +505,11 @@ def verify_render_output(
     """Prove a render's real output files, not merely that execute() returned.
 
     Confirms actual output existence, the expected frame set, format binding
-    and (for PNG) a decode-validated file. Formats with no decoder here are
-    signature-only: their content acceptance stays unknown and ``verified``
-    stays false. A native ``nuke.execute`` returning is not treated as proof.
+    and (for PNG) a file decodable within the strict validated subset. Illegal
+    PNG structures fail; legal features outside that subset stay unknown.
+    Formats with no decoder here are signature-only: their content acceptance
+    stays unknown and ``verified`` stays false. A native ``nuke.execute``
+    returning is not treated as proof.
     This is a filesystem readback only; it is never native Nuke render
     acceptance and mock/temp fixtures do not prove a render.
     """

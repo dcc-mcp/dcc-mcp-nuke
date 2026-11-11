@@ -108,6 +108,117 @@ def test_decoder_capability_limit_is_unknown_not_a_broken_file(tmp_path):
     assert result["content_checks"] == {"1": "unknown:interlaced_not_validated"}
 
 
+# --- PNG spec subset: illegal critical fields and chunk ordering --------------
+
+
+def _ihdr(width=2, height=2, bit_depth=8, color_type=2, compression=0, filter_method=0, interlace=0):
+    return struct.pack(">IIBBBBB", width, height, bit_depth, color_type, compression, filter_method, interlace)
+
+
+def _raw_scanlines(width=2, height=2, bit_depth=8, color_type=2):
+    channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}[color_type]
+    row_bytes = (width * channels * bit_depth + 7) // 8
+    return b"\x00" * (height * (row_bytes + 1))
+
+
+def _png_from(ihdr, raw=None, *, palette=None, extra=b""):
+    """Build a CRC-valid PNG with a real zlib IDAT stream."""
+    if raw is None:
+        width, height, bit_depth, color_type = struct.unpack(">IIBBBBB", ihdr)[:4]
+        raw = _raw_scanlines(width, height, bit_depth, color_type)
+    out = _PNG_SIGNATURE + _chunk(b"IHDR", ihdr)
+    if palette is not None:
+        out += _chunk(b"PLTE", palette)
+    return out + extra + _chunk(b"IDAT", zlib.compress(raw)) + _chunk(b"IEND", b"")
+
+
+def _png_with_split_idat():
+    """Two IDAT chunks carrying one continuous zlib stream, split by an ancillary chunk."""
+    compressed = zlib.compress(_raw_scanlines())
+    return (
+        _PNG_SIGNATURE
+        + _chunk(b"IHDR", _ihdr())
+        + _chunk(b"IDAT", compressed[:7])
+        + _chunk(b"tEXt", b"Comment\x00x")
+        + _chunk(b"IDAT", compressed[7:])
+        + _chunk(b"IEND", b"")
+    )
+
+
+# Four confirmed false-"decodable" files: valid CRCs and a real zlib stream.
+_INVALID_PNG_CRITICAL_FIELDS = [
+    pytest.param(_png_from(_ihdr(compression=1)), id="compression_method_1"),
+    pytest.param(_png_from(_ihdr(filter_method=1)), id="filter_method_1"),
+    pytest.param(_png_from(_ihdr(color_type=3), _raw_scanlines(color_type=3)), id="indexed_color_without_plte"),
+    pytest.param(_png_from(_ihdr(), extra=_chunk(b"ABCD", b"\x00" * 4)), id="unknown_critical_ABCD_chunk"),
+]
+
+
+@pytest.mark.parametrize("payload", _INVALID_PNG_CRITICAL_FIELDS)
+def test_illegal_png_critical_fields_are_not_content_verified(tmp_path, payload):
+    """W3C PNG 3rd edition: only compression/filter method 0 is legal, indexed
+    color requires PLTE, and an unknown critical chunk cannot be ignored."""
+    target = tmp_path / "illegal.png"
+    target.write_bytes(payload)
+    result = verify_render_output(output_path=str(target), first_frame=1, last_frame=1, expected_format="png")
+    assert result["verified"] is False
+    assert result["content_validation"] == "decode_failed"
+    assert result["content_acceptance"] == "failed"
+    assert result["unreadable_frames"] == [1]
+    assert result["content_unverified_frames"] == []
+    assert result["content_checks"]["1"].startswith("invalid:")
+    assert result["reason"] != "all expected frames present, nonempty and readable"
+
+
+def test_legal_indexed_png_is_unknown_not_claimed_decodable(tmp_path):
+    """A legal indexed PNG has PLTE, but palette semantics are not decoded."""
+    payload = _png_from(_ihdr(color_type=3), _raw_scanlines(color_type=3), palette=b"\x00\x00\x00" * 4)
+    target = tmp_path / "indexed.png"
+    target.write_bytes(payload)
+    result = verify_render_output(output_path=str(target), first_frame=1, last_frame=1, expected_format="png")
+    assert result["verified"] is False
+    assert result["content_acceptance"] == "unknown"
+    assert result["content_unverified_frames"] == [1]
+    assert result["content_checks"]["1"] == "unknown:indexed_color_not_validated"
+
+
+def test_unknown_ancillary_chunk_is_unknown_not_claimed_decodable(tmp_path):
+    payload = _png_from(_ihdr(), extra=_chunk(b"tEXt", b"Comment\x00hello"))
+    target = tmp_path / "ancillary.png"
+    target.write_bytes(payload)
+    result = verify_render_output(output_path=str(target), first_frame=1, last_frame=1, expected_format="png")
+    assert result["verified"] is False
+    assert result["content_acceptance"] == "unknown"
+    assert result["content_checks"]["1"] == "unknown:ancillary_chunk_not_validated"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param(_png_with_split_idat(), id="ancillary_between_idat_chunks"),
+        pytest.param(
+            _PNG_SIGNATURE
+            + _chunk(b"IHDR", _ihdr())
+            + _chunk(b"IDAT", zlib.compress(_raw_scanlines()))
+            + _chunk(b"PLTE", b"\x00\x00\x00")
+            + _chunk(b"IEND", b""),
+            id="plte_after_idat",
+        ),
+        pytest.param(
+            _png_from(_ihdr(color_type=0), _raw_scanlines(color_type=0), palette=b"\x00\x00\x00"),
+            id="plte_forbidden_for_grayscale",
+        ),
+    ],
+)
+def test_illegal_png_chunk_order_is_not_content_verified(tmp_path, payload):
+    target = tmp_path / "bad_order.png"
+    target.write_bytes(payload)
+    result = verify_render_output(output_path=str(target), first_frame=1, last_frame=1, expected_format="png")
+    assert result["verified"] is False
+    assert result["content_acceptance"] == "failed"
+    assert result["content_checks"]["1"].startswith("invalid:")
+
+
 # --- Counter-example 2: locating a dotted module must not execute its parent --
 
 
