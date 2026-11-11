@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import builtins
 import importlib.machinery
+import os
 import struct
 import sys
 import zipfile
@@ -384,3 +385,170 @@ def test_frame_limit_boundaries_keep_the_failure_semantics(tmp_path):
     # must not claim a full decode even though both checked frames decode.
     assert clamped["content_validation"] != "full_decode"
     assert clamped["content_acceptance"] != "verified"
+
+
+# --- Regressions for the six confirmed readback/probe contracts ----------------
+# All fixtures below are synthetic, in-process fakes. They are NOT native Nuke
+# host or render acceptance.
+
+
+def _guarded_open(monkeypatch, reads):
+    """Wrap real file handles so every requested read size is observable."""
+    real_open = builtins.open
+
+    class GuardedHandle:
+        def __init__(self, raw):
+            self._raw = raw
+
+        def __enter__(self):
+            self._raw.__enter__()
+            return self
+
+        def __exit__(self, *exc):
+            return self._raw.__exit__(*exc)
+
+        def read(self, size=-1):
+            reads.append(size)
+            return self._raw.read(size)
+
+    def opener(path, mode="r", *args, **kwargs):
+        return GuardedHandle(real_open(path, mode, *args, **kwargs))
+
+    return opener
+
+
+def test_signature_only_format_reads_only_its_magic(tmp_path, monkeypatch):
+    """EXR/JPEG/TIFF/DPX have no decoder here: reading 64 MiB per file is waste."""
+    target = tmp_path / "frame.exr"
+    target.write_bytes(b"\x76\x2f\x31\x01" + b"\x00" * 4096)
+    reads = []
+    with monkeypatch.context() as ctx:
+        ctx.setattr(builtins, "open", _guarded_open(monkeypatch, reads))
+        result = verify_render_output(output_path=str(target), first_frame=1, last_frame=1)
+
+    assert reads == [8], "signature-only format must not read the whole file"
+    assert result["verified"] is False
+    assert result["content_checks"] == {"1": "signature_only"}
+    assert result["content_acceptance"] == "unknown"
+
+
+def test_matching_png_reads_decoded_content_within_budget(tmp_path, monkeypatch):
+    """Only a matching PNG within the byte budget gets a second, bounded read."""
+    target = tmp_path / "final.png"
+    target.write_bytes(_VALID_PNG)
+    reads = []
+    with monkeypatch.context() as ctx:
+        ctx.setattr(builtins, "open", _guarded_open(monkeypatch, reads))
+        result = verify_render_output(output_path=str(target), first_frame=1, last_frame=1, expected_format="png")
+
+    assert reads[0] == 8
+    assert all(size <= 64 * 1024 * 1024 + 1 for size in reads if isinstance(size, int))
+    assert result["verified"] is True
+    assert result["content_checks"] == {"1": "decodable"}
+
+
+def test_over_budget_png_does_not_read_the_file_body(tmp_path, monkeypatch):
+    """A declared size above the budget must not trigger a 64 MiB body read."""
+    target = tmp_path / "huge.png"
+    target.write_bytes(_VALID_PNG)
+    reads = []
+    with monkeypatch.context() as ctx:
+        # Fake the size so the counterexample stays small; no large file is created.
+        ctx.setattr(os.path, "getsize", lambda _path: 128 * 1024 * 1024)
+        ctx.setattr(builtins, "open", _guarded_open(monkeypatch, reads))
+        result = verify_render_output(output_path=str(target), first_frame=1, last_frame=1, expected_format="png")
+
+    assert reads == [8], "an over-budget PNG must not have its contents read"
+    assert result["content_checks"]["1"] == "unknown:exceeds_validation_budget"
+    assert result["verified"] is False
+
+
+def test_standard_finder_miss_is_unknown_not_globally_unavailable(monkeypatch):
+    """A custom meta_path finder could provide the module; the default probe
+    must not claim global unavailability and must never execute that finder."""
+    calls = []
+
+    class ProvidingFinder:
+        def find_spec(self, fullname, target=None):
+            calls.append(fullname)
+            return importlib.machinery.ModuleSpec(fullname, None)
+
+    monkeypatch.setattr(sys, "meta_path", [*sys.meta_path, ProvidingFinder()])
+    result = diagnose_dependencies(None, required_modules=["synthetic_custom_finder_module"])
+
+    entry = result["modules"][0]
+    assert calls == [], "the read-only probe invoked a custom import hook"
+    assert entry["status"] == "not_found"
+    assert entry["certainty"] == "unknown", "a standard-finder miss is not verified unavailability"
+    assert entry["import_tested"] is False
+    assert result["module_probe"]["custom_import_hooks"] == "not_consulted"
+    assert result["issues"][0]["code"] == "module_check_unknown"
+    assert result["issues"][0]["certainty"] == "unknown"
+    assert result["issue_counts"]["verified_unavailable"] == 0
+    assert "custom" in entry["certainty_note"].lower()
+    assert "install.md" in entry["repair"]
+
+
+def test_caller_supplied_lookup_keeps_its_explicit_unavailable_contract():
+    """The caller's own lookup keeps its own certainty; it is independent of the
+    conservative default probe."""
+    result = diagnose_dependencies(None, required_modules=["vendor.nodes"], module_available=lambda _name: False)
+    entry = result["modules"][0]
+    assert entry["status"] == "not_found"
+    assert entry["certainty"] == "verified_unavailable"
+    assert result["issues"][0]["code"] == "missing_module"
+    assert "install.md" in entry["repair"]
+
+
+def test_spec_legal_oversize_png_is_unknown_not_invalid(tmp_path):
+    """PNG permits dimensions up to 2**31-1; only this validator's local cap
+    stops it. A capability limit is not a broken or illegal file."""
+    payload = _png_from(_ihdr(width=100001, height=1), raw=_raw_scanlines(width=100001, height=1))
+    target = tmp_path / "wide.png"
+    target.write_bytes(payload)
+    result = verify_render_output(output_path=str(target), first_frame=1, last_frame=1, expected_format="png")
+
+    assert result["verified"] is False
+    assert result["content_acceptance"] == "unknown"
+    assert result["unreadable_frames"] == []
+    assert result["content_unverified_frames"] == [1]
+    assert result["content_checks"]["1"] == "unknown:dimensions_exceed_local_validation_budget"
+
+
+@pytest.mark.parametrize("width", [0, 1 << 31])
+def test_illegal_png_dimensions_still_fail(tmp_path, width):
+    """Zero and >2**31-1 remain genuinely illegal, not capability limits."""
+    payload = _png_from(_ihdr(width=width, height=1), raw=b"\x00")
+    target = tmp_path / "illegal_dimension.png"
+    target.write_bytes(payload)
+    result = verify_render_output(output_path=str(target), first_frame=1, last_frame=1, expected_format="png")
+
+    assert result["verified"] is False
+    assert result["content_acceptance"] == "failed"
+    assert result["unreadable_frames"] == [1]
+    assert result["content_checks"]["1"].startswith("invalid:")
+
+
+def test_literal_path_reports_the_final_requested_frame(tmp_path):
+    """first=1, last=2, step=2 renders only frame 1; a literal path must not
+    label the checked file as frame 2."""
+    target = tmp_path / "final.png"
+    target.write_bytes(_VALID_PNG)
+    result = verify_render_output(output_path=str(target), first_frame=1, last_frame=2, step=2, expected_format="png")
+
+    assert result["requested_frame_count"] == 1
+    assert result["expected_frames"] == [1]
+    assert result["content_checks"] == {"1": "decodable"}
+    assert result["warnings"] == []
+    # A single-frame request to a literal path can be fully proven. The defect
+    # was the frame label, not the existence of the file.
+    assert result["verified"] is True
+
+
+def test_literal_path_missing_file_names_the_actual_frame(tmp_path):
+    result = verify_render_output(output_path=str(tmp_path / "final.png"), first_frame=1, last_frame=2, step=2)
+
+    assert result["requested_frame_count"] == 1
+    assert result["expected_frames"] == [1]
+    assert result["missing_frames"] == [1]
+    assert result["verified"] is False

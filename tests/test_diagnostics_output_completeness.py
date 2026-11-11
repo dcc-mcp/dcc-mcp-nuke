@@ -19,7 +19,7 @@ import struct
 import sys
 import zlib
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock
 
 from dcc_mcp_nuke.diagnostics import verify_render_output
@@ -259,12 +259,15 @@ def _load_render_module():
 
 
 def _fake_nuke(monkeypatch, output_path: str):
+    """Fake Nuke host and Write knobs; NOT native Nuke render acceptance."""
+    values = {"file": output_path, "frame_mode": "expression", "frame": "frame"}
     write = MagicMock()
     write.Class.return_value = "Write"
-    write.__getitem__.return_value.value.return_value = output_path
+    write.__getitem__.side_effect = lambda name: SimpleNamespace(value=lambda: values.get(name))
     nuke = ModuleType("nuke")
     nuke.toNode = MagicMock(return_value=write)
     nuke.execute = MagicMock()
+    nuke.filename = MagicMock(return_value=output_path)
     monkeypatch.setitem(sys.modules, "nuke", nuke)
     return nuke, write
 

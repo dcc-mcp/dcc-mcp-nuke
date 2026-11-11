@@ -53,6 +53,11 @@ _PNG_CHANNELS = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}
 _PNG_DEPTHS = {0: (1, 2, 4, 8, 16), 2: (8, 16), 3: (1, 2, 4, 8), 4: (8, 16), 6: (8, 16)}
 _PNG_KNOWN_CRITICAL = (b"IHDR", b"PLTE", b"IDAT", b"IEND")
 _PNG_MAX_PLTE_BYTES = 3 * 256
+# PNG IHDR dimensions are unsigned 32-bit values, but the spec caps them at
+# 2**31 - 1. 100000 is only this validator's local decode budget: a legal PNG
+# above it is a capability limit (unknown), never an illegal file.
+_PNG_SPEC_MAX_DIMENSION = (1 << 31) - 1
+_PNG_LOCAL_MAX_DIMENSION = 100000
 _CONTENT_DECODERS = ("png",)
 _MAX_IMAGE_BYTES = 64 * 1024 * 1024
 # Mirrors file_references._SEQUENCE so substitution stays consistent with the
@@ -190,24 +195,48 @@ def diagnose_dependencies(
                 status = "importable" if present else "not_found"
                 item_certainty = "caller_asserted" if present else "verified_unavailable"
                 note = "The caller supplied this lookup; its certainty is asserted by the caller."
+                repair = (
+                    "No action needed."
+                    if present
+                    else "Install this module into Nuke's embedded interpreter (see install.md); "
+                    "this report does not install or import modules."
+                )
             except Exception:
                 status, item_certainty = "unknown", "unknown"
                 note = "The supplied lookup failed; availability is unknown."
+                repair = "Confirm availability from Nuke's embedded interpreter; this report does not import modules."
         else:
             probe = _safe_module_probe(name)
             if probe == "discoverable":
                 status = "discoverable"
                 item_certainty = "verified_discoverable_not_import_tested"
-                note = "A module spec is locatable, but the module was not imported; transitive dependencies "
-                "and top-level code are unverified."
+                note = (
+                    "A module spec is locatable, but the module was not imported; transitive dependencies "
+                    "and top-level code are unverified."
+                )
+                repair = "No action needed."
             elif probe == "not_found":
-                status, item_certainty = "not_found", "verified_unavailable"
-                note = "No spec was located by the standard spec-locating finders without executing module code; "
-                "custom import hooks are not consulted."
+                # A miss by the standard finders is not global unavailability:
+                # a custom finder, cached importer or host plug-in path could
+                # still provide the module, and none of them may be executed.
+                status, item_certainty = "not_found", "unknown"
+                note = (
+                    "No spec was located by the standard spec-locating finders without executing module code. "
+                    "Custom import hooks, cached finders and host plug-in paths are not consulted, so availability "
+                    "is unknown rather than globally confirmed unavailable."
+                )
+                repair = (
+                    "Availability is unknown because custom finders were not consulted; confirm from Nuke's "
+                    "embedded interpreter before installing (see install.md). This report does not import or "
+                    "execute module code."
+                )
             else:
                 status, item_certainty = "unknown", "unknown"
-                note = "Dotted names and transitive imports cannot be checked without executing parent package "
-                "code; availability is unknown."
+                note = (
+                    "Dotted names and transitive imports cannot be checked without executing parent package "
+                    "code; availability is unknown."
+                )
+                repair = "Confirm availability from Nuke's embedded interpreter; this report does not import modules."
         module_report.append(
             {
                 "module": name,
@@ -216,12 +245,7 @@ def diagnose_dependencies(
                 "method": method,
                 "import_tested": False,
                 "certainty_note": note,
-                "repair": (
-                    "No action needed."
-                    if status in ("importable", "discoverable")
-                    else "Install this module into Nuke's embedded interpreter (see install.md); "
-                    "this report does not install or import modules."
-                ),
+                "repair": repair,
             }
         )
 
@@ -274,7 +298,7 @@ def diagnose_dependencies(
         issues.append(
             {
                 "stage": "python_module",
-                "code": "missing_module" if entry["status"] == "not_found" else "module_check_unknown",
+                "code": "missing_module" if entry["certainty"] == "verified_unavailable" else "module_check_unknown",
                 "subject": entry["module"],
                 "certainty": entry["certainty"],
                 "facts": {"method": entry["method"]},
@@ -427,8 +451,8 @@ def _validate_png(data: bytes) -> tuple[bool, str]:
             if (
                 width <= 0
                 or height <= 0
-                or width > 100000
-                or height > 100000
+                or width > _PNG_SPEC_MAX_DIMENSION
+                or height > _PNG_SPEC_MAX_DIMENSION
                 or color_type not in _PNG_CHANNELS
                 or bit_depth not in _PNG_DEPTHS[color_type]
                 or compression != 0
@@ -470,6 +494,11 @@ def _validate_png(data: bytes) -> tuple[bool, str]:
         offset += 12 + length
     if width is None or not idat or not saw_iend or offset != len(data):
         return False, "missing_required_chunks"
+    # Spec-legal dimensions above the local decode budget are a capability
+    # limit, not an illegal IHDR. Return before computing row_bytes/expected so
+    # a huge-but-legal image cannot inflate the decode budget arithmetic.
+    if width > _PNG_LOCAL_MAX_DIMENSION or height > _PNG_LOCAL_MAX_DIMENSION:
+        return False, "unknown:dimensions_exceed_local_validation_budget"
     if interlace == 1:
         return False, "unknown:interlaced_not_validated"
     # Indexed color requires PLTE. Even with a legal palette, palette index
@@ -585,9 +614,11 @@ def verify_render_output(
     requested_range = range(first_frame, last_frame + 1, step)
     requested_frames = list(itertools.islice(requested_range, max_frames))
     # A literal path (no frame token) collapses a multi-frame range into one
-    # file; only the final frame can survive. Report this instead of claiming
-    # that every requested frame was written.
-    checked_frames = [last_frame] if not is_sequence else requested_frames
+    # file; only the final frame can survive. Compute that frame arithmetically:
+    # last_frame is the requested bound, not necessarily a rendered frame when
+    # step > 1 (e.g. first=1, last=2, step=2 renders only frame 1).
+    final_frame = first_frame + (requested_count - 1) * step
+    checked_frames = [final_frame] if not is_sequence else requested_frames
     collapse_warning = not is_sequence and requested_count > 1
 
     present, missing, zero, unreadable, detected = [], [], [], [], {}
@@ -609,12 +640,19 @@ def verify_render_output(
                 zero.append(frame)
                 continue
             with open(path, "rb") as handle:
-                data = handle.read(_MAX_IMAGE_BYTES + 1)
+                # Read the signature first. Only a format that has a decoder
+                # here, and only within the byte budget, needs the remaining
+                # contents; signature-only formats never read their body.
+                signature = handle.read(8)
+                kind = _sniff(signature)
+                if kind in _CONTENT_DECODERS and size <= _MAX_IMAGE_BYTES:
+                    data = signature + handle.read(_MAX_IMAGE_BYTES + 1 - len(signature))
+                else:
+                    data = signature
         except OSError:
             missing.append(frame)
             continue
         present.append(frame)
-        kind = _sniff(data[:8])
         detected[str(frame)] = kind or "unrecognized"
         if (fmt is not None and kind != fmt) or (fmt is None and kind is None):
             unreadable.append(frame)

@@ -44,9 +44,13 @@ from an external CPython, locates module specs without importing or executing
 any module code, and inventories third-party plug-ins without loading them.
 A locatable spec is reported as `discoverable` with `import_tested: false`,
 never as `importable`/`verified`; dotted names and transitive dependencies that
-cannot be checked without running parent-package code stay `unknown`. A missing
-Nuke version contract and third-party ComfyUI reports are never turned into a
-causal claim. The report never installs, loads, or prints credentials.
+cannot be checked without running parent-package code stay `unknown`. A miss by
+the standard spec-locating finders also stays `unknown`: custom import hooks,
+cached finders and host plug-in paths are never consulted, so a standard miss
+is not global unavailability. A caller-supplied lookup keeps its own explicit
+certainty. A missing Nuke version contract and third-party ComfyUI reports are
+never turned into a causal claim. The report never installs, loads, or prints
+credentials.
 
 Use `nuke_diagnostics__describe_execution_sources` to answer where work runs
 and whether any cloud model, provider, pricing, API key or paid call is added.
@@ -68,8 +72,12 @@ group-scoped over the full requested frame set: `full_decode`/`verified`
 require a decodable check for every required frame, so missing or empty
 outputs never make the group content-verified. A frame set truncated by
 `max_frames` or collapsed by a literal path is only partially checked, so the
-group stays `unknown` too. A filesystem readback is never
-native Nuke render acceptance.
+group stays `unknown` too. Only a matching PNG within the byte budget has its
+body read; signature-only formats read just their magic. A literal path reports
+the final actually requested frame (`first + (count - 1) * step`), never the
+upper bound. Spec-legal PNG dimensions above this validator's local decode
+budget are a capability limit (`unknown`), not an illegal IHDR. A filesystem
+readback is never native Nuke render acceptance.
 
 All probes are read-only. None mutates the script, starts a server, executes
 user module code, reads credentials, or makes a network or paid call.

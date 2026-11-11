@@ -26,6 +26,17 @@ adjustments. Declare
 Each new layer connects to Nuke input A and the accumulated composite to input
 B, so `minus` evaluates `A-B`.
 
+`render_write_node` reads back the active Write filename from
+`nuke.filename(node)`, which follows Root proxy mode and keeps sequence
+placeholders; the `file` knob is not used as the output path. Write frame
+renumbering (`frame_mode` `expression`/`start at`/`offset`) is resolved by
+arithmetic for the identity expression and for integer `offset`/`start at`
+mappings, so the verifier checks the rendered frame numbers. Arbitrary host
+expressions, unreadable knobs and `start at` with a non-unit step are never
+guessed: an unresolvable mapping reports verification as `unknown` instead of
+checking stale timeline-named files. The readback is
+filesystem-only, never native Nuke render acceptance.
+
 The builder adds nodes through the same checked CRUD creation path as
 `nuke-node-graph`. Existing nodes, names, connections, knob values, and selection
 are preserved. Name collisions receive new unique names, returned in the result.
