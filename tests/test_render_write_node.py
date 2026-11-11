@@ -51,13 +51,22 @@ def _fake_nuke(
     frame="frame",
     file_type=None,
     unreadable_knob=None,
+    after_render="",
 ):
     """Install a fake Nuke host whose active filename may differ from `file`.
 
     ``unreadable_knob`` makes one knob raise on access, modeling a knob whose
     value cannot be read at all (distinct from a readable, empty value).
+    ``after_render`` sets a non-empty post-render callback script (inspected
+    only, never executed or parsed).
     """
-    values = {"file": file_path, "frame_mode": frame_mode, "frame": frame, "file_type": file_type}
+    values = {
+        "file": file_path,
+        "frame_mode": frame_mode,
+        "frame": frame,
+        "file_type": file_type,
+        "afterRender": after_render,
+    }
     write = MagicMock()
     write.Class.return_value = "Write"
 
@@ -653,6 +662,8 @@ def test_per_frame_callback_forces_unknown_verification(monkeypatch, tmp_path):
     verification = result["context"]["output_verification"]
     assert verification["mode"] == "unknown"
     assert result["postcondition"]["verified"] is False
+    # A present callback must not suppress the best-effort informational read.
+    assert result["context"]["output_path"] == path  # informational only
 
 
 def test_unreadable_callback_state_fails_closed_to_unknown(monkeypatch, tmp_path):
@@ -668,6 +679,28 @@ def test_unreadable_callback_state_fails_closed_to_unknown(monkeypatch, tmp_path
 
     assert result["context"]["output_verification"]["mode"] == "unknown"
     assert result["postcondition"]["verified"] is False
+    # An unreadable snapshot must not suppress the best-effort informational read.
+    assert result["context"]["output_path"] == path  # informational only
+
+
+def test_after_render_callback_still_reports_best_effort_informational_path(monkeypatch, tmp_path):
+    """A post-render callback makes one final filename unprovable, but the
+    informational active filename is still read exactly once after execute and
+    reported as best-effort context; verification stays unknown/false.
+
+    In-process fake only; NOT native Nuke render acceptance. No host is
+    launched and no user callback is executed or parsed.
+    """
+    module = _load_render_module()
+    active = str(tmp_path / "shot.%04d.png")
+    nuke, write = _fake_nuke(monkeypatch, active, after_render="select a post-render path")
+
+    result = module.main.__wrapped__("Final", 1, 1)
+
+    # The informational read happens even with a post-render callback present.
+    nuke.filename.assert_called_once_with(write)
+    verification = _assert_unknown_readback(result, output_path=active)
+    assert "callback" in verification["reason"]
 
 
 def test_self_clearing_after_render_callback_does_not_verify_stale_output(monkeypatch, tmp_path):

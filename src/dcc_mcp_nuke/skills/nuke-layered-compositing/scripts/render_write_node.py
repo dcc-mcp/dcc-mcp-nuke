@@ -261,28 +261,25 @@ def _active_output_path_after_execute(
     """Return the best-effort active Write filename AFTER ``nuke.execute``.
 
     The returned path is INFORMATIONAL only and is NEVER used to claim a
-    verified render. ``pre_callback_state`` (snapshotted BEFORE execute) and
-    ``pre_file_knob`` (raw ``file`` knob baseline) are retained as fail-closed
-    diagnostics: an unreadable callback snapshot or file knob, or a
-    frame-level/``afterRender`` callback on either side, short-circuits the
-    read. But even when every observation is clean and the raw ``file`` knob
-    is EQUAL before and after execute, a process-wide ``nuke.add*`` callback
-    (or a temporary handler registered during execute) could have repointed
-    ``file`` during the render and restored it afterwards. Nuke exposes no
-    public API to enumerate such handlers or obtain an actual-path receipt,
-    so this case is indistinguishable from a clean render and EVERY branch
-    here returns a non-None reason: the caller always fails closed to
-    ``unknown``. Render callback scripts are inspected but never executed or
-    parsed.
+    verified render. ``nuke.filename`` is read once, best-effort, as
+    post-execute context even when a frame-level/``afterRender`` callback is
+    present or the callback snapshot is unreadable; an unreadable filename
+    yields ``None``. ``pre_callback_state`` (snapshotted BEFORE execute) and
+    ``pre_file_knob`` (raw ``file`` knob baseline) are retained purely as
+    fail-closed diagnostics that shape the returned reason: they never suppress
+    the informational read and never produce a positive verdict. But even when
+    every observation is clean and the raw ``file`` knob is EQUAL before and
+    after execute, a process-wide ``nuke.add*`` callback (or a temporary
+    handler registered during execute) could have repointed ``file`` during the
+    render and restored it afterwards. Nuke exposes no public API to enumerate
+    such handlers or obtain an actual-path receipt, so this case is
+    indistinguishable from a clean render and EVERY branch here returns a
+    non-None reason: the caller always fails closed to ``unknown``. Render
+    callback scripts are inspected but never executed or parsed.
     """
-    post_callback_state = _callback_state_snapshot(node)
-    if pre_callback_state is None or post_callback_state is None:
-        return None, "Write render callback state could not be read; a single final output path cannot be proven"
-    if any(pre_callback_state[name] or post_callback_state[name] for name in _MULTI_PATH_CALLBACK_KNOBS):
-        return None, (
-            "a per-frame or afterRender callback present before or after execute can change the output path; "
-            "one final filename cannot prove the rendered output set"
-        )
+    # One best-effort, INFORMATIONAL active filename read after execute. It is
+    # always attempted, even when a render callback is present or the callback
+    # snapshot is unreadable; those observations only shape the reason below.
     filename_api = getattr(nuke, "filename", None)
     if not callable(filename_api):
         return None, "nuke.filename(node) is unavailable after execute"
@@ -292,6 +289,15 @@ def _active_output_path_after_execute(
         return None, "active Write filename could not be read after execute"
     if not isinstance(output_path, str) or not output_path:
         return None, "active Write filename could not be resolved after execute"
+
+    post_callback_state = _callback_state_snapshot(node)
+    if pre_callback_state is None or post_callback_state is None:
+        return output_path, "Write render callback state could not be read; a single final output path cannot be proven"
+    if any(pre_callback_state[name] or post_callback_state[name] for name in _MULTI_PATH_CALLBACK_KNOBS):
+        return output_path, (
+            "a per-frame or afterRender callback present before or after execute can change the output path; "
+            "one final filename cannot prove the rendered output set"
+        )
 
     post_file_knob = _write_file_knob(node)
     if pre_file_knob is _UNREADABLE or post_file_knob is _UNREADABLE:
