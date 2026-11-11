@@ -239,7 +239,7 @@ def test_legal_unknown_png_stays_unknown(tmp_path):
     _assert_group_metadata_consistent(result)
 
 
-# --- Typed tool wrapper must propagate the corrected group metadata ----------
+# --- Typed tool wrapper reports honest unknown; group metadata is independent -
 
 
 def _load_render_module():
@@ -272,34 +272,83 @@ def _fake_nuke(monkeypatch, output_path: str):
     return nuke, write
 
 
-def test_typed_wrapper_missing_outputs_metadata_consistent(monkeypatch, tmp_path):
+def test_typed_wrapper_reports_unknown_instead_of_filesystem_metadata(monkeypatch, tmp_path):
+    """Corrected expectation: a positive/group-metadata claim from a
+    host-derived readback is no longer valid for ANY render. The wrapper still
+    runs ``nuke.execute`` (the normal render action) but cannot prove the output
+    path set, so it reports one fail-closed unknown shape and NEVER a
+    filesystem-verification verdict (no ``missing_frame_count``/``content_checks``).
+
+    Group-scoped content metadata is a property of the genuinely provable,
+    independent ``verify_render_output`` contract with an explicit
+    caller-supplied path; its specification tests above remain unchanged.
+    """
     module = _load_render_module()
-    _fake_nuke(monkeypatch, str(tmp_path / "missing.%04d.png"))
+    nuke, write = _fake_nuke(monkeypatch, str(tmp_path / "missing.%04d.png"))
     result = module.main.__wrapped__("Final", 1, 3, step=1)
+
+    nuke.execute.assert_called_once_with(write, 1, 3, 1)
     assert result["success"] is True
     assert result["postcondition"]["verified"] is False
     verification = result["context"]["output_verification"]
     assert verification["verified"] is False
-    assert verification["missing_frame_count"] == 3
+    assert verification["mode"] == "unknown"
+    assert verification["content_validation"] == "not_performed"
+    assert verification["content_acceptance"] == "unknown"
     assert verification["content_checks"] == {}
-    assert verification["content_validation"] != "full_decode"
-    assert verification["content_acceptance"] != "verified"
-    assert "missing" in verification["reason"]
-    _assert_group_metadata_consistent(verification)
+    assert verification["expected_frames"] == []
+    assert verification["native_render_acceptance"] == "not_performed"
+    assert "callback" in verification["reason"]
+
+    # The independent contract still describes missing outputs correctly when
+    # the caller supplies the path explicitly.
+    direct = verify_render_output(
+        output_path=str(tmp_path / "missing.%04d.png"),
+        first_frame=1,
+        last_frame=3,
+        expected_format="png",
+    )
+    assert direct["verified"] is False
+    assert direct["missing_frame_count"] == 3
+    assert "missing" in direct["reason"]
+    _assert_group_metadata_consistent(direct)
 
 
-def test_typed_wrapper_valid_sequence_metadata(monkeypatch, tmp_path):
+def test_typed_wrapper_valid_sequence_still_unknown(monkeypatch, tmp_path):
+    """Even decodable files at the active path cannot make a host-derived
+    readback provable: a process-wide callback could have repointed ``file``
+    during execute and restored it. The wrapper renders normally but returns
+    unknown; the positive ``verified=true`` expectation is corrected. The
+    independent verifier's full-decode metadata is tested directly below.
+    """
     module = _load_render_module()
     for frame in (1, 2, 3):
         _write_png(tmp_path / f"good.{frame:04d}.png")
     nuke, write = _fake_nuke(monkeypatch, str(tmp_path / "good.%04d.png"))
     result = module.main.__wrapped__("Final", 1, 3, step=1)
+
     nuke.execute.assert_called_once_with(write, 1, 3, 1)
     assert result["success"] is True
-    assert result["postcondition"]["verified"] is True
+    assert result["postcondition"]["verified"] is False
     verification = result["context"]["output_verification"]
-    assert verification["verified"] is True
-    assert verification["content_validation"] == "full_decode"
-    assert verification["content_acceptance"] == "verified"
-    assert len(verification["content_checks"]) == 3
-    _assert_group_metadata_consistent(verification)
+    assert verification["verified"] is False
+    assert verification["mode"] == "unknown"
+    assert verification["content_validation"] == "not_performed"
+    assert verification["content_acceptance"] == "unknown"
+    assert verification["content_checks"] == {}
+    assert verification["native_render_acceptance"] == "not_performed"
+    assert "callback" in verification["reason"]
+
+    # The genuinely provable independent contract still reports a full decode
+    # for the same files when given the path explicitly.
+    direct = verify_render_output(
+        output_path=str(tmp_path / "good.%04d.png"),
+        first_frame=1,
+        last_frame=3,
+        expected_format="png",
+    )
+    assert direct["verified"] is True
+    assert direct["content_validation"] == "full_decode"
+    assert direct["content_acceptance"] == "verified"
+    assert len(direct["content_checks"]) == 3
+    _assert_group_metadata_consistent(direct)

@@ -63,29 +63,43 @@ cloud integration, no billing estimate, no BYO API key and no paid calls; those
 belong to the surrounding MCP host/CLI and are explicitly unknown here. Native
 host verification remains `not_performed`.
 
-Output readback is wired through `nuke_layered_compositing__render_write_node`:
-a returning `nuke.execute` is not proof. The verifier binds `expected_format`
-to the Write `file_type` or a well-founded output path extension before any
-file is accepted; an unknown or contradictory format stays `unknown` instead
-of being read as "any format". Magic-number sniffing only confirms a candidate
-format against that binding, never native format acceptance. For PNG the
-verifier validates a strict, provable subset with the standard library: chunk
-lengths and CRCs, legal IHDR fields, required chunk ordering and bounded IDAT
-decompression.
-Unknown critical chunks and illegal structures fail; legal features it cannot
-prove (indexed color, interlacing, palettes, unknown ancillary chunks) stay
-`unknown`, never `verified`. Formats with no decoder here are signature-only,
-with `content_acceptance: "unknown"` and `verified: false`. Content fields are
-group-scoped over the full requested frame set: `full_decode`/`verified`
-require a decodable check for every required frame, so missing or empty
-outputs never make the group content-verified. A frame set truncated by
-`max_frames` or collapsed by a literal path is only partially checked, so the
-group stays `unknown` too. Only a matching PNG within the byte budget has its
-body read; signature-only formats read just their magic. A literal path reports
-the final actually requested frame (`first + (count - 1) * step`), never the
-upper bound. Spec-legal PNG dimensions above this validator's local decode
-budget are a capability limit (`unknown`), not an illegal IHDR. A filesystem
+Output readback has two distinct, deliberately separate contracts. The
+`nuke_layered_compositing__render_write_node` wrapper performs the normal
+`nuke.execute` render and reports its post-execute active filename as
+INFORMATIONAL context only. Nuke exposes no public API to enumerate
+process-wide `nuke.add*` render callbacks, to observe a handler
+registered/removed during `execute()`, or to obtain a receipt of the path(s)
+actually written; a callback can repoint the Write `file` knob during the
+render and restore it afterwards. That change-and-restore case is
+observationally identical to a clean render, so the wrapper fails closed to
+`unknown` for EVERY render and never claims `verified=true` on a host-derived
+single filename. A returning `nuke.execute` is not proof, and a filesystem
 readback is never native Nuke render acceptance.
+
+The genuinely provable, independent filesystem verifier is
+`dcc_mcp_nuke.diagnostics.verify_render_output`, which requires an explicit,
+caller-supplied `output_path`. It binds `expected_format` to the Write
+`file_type` or a well-founded output path extension before any file is
+accepted; an unknown or contradictory format stays `unknown` instead of being
+read as "any format". Magic-number sniffing only confirms a candidate format
+against that binding, never native format acceptance. For PNG the verifier
+validates a strict, provable subset with the standard library: chunk lengths
+and CRCs, legal IHDR fields, required chunk ordering and bounded IDAT
+decompression. Unknown critical chunks and illegal structures fail; legal
+features it cannot prove (indexed color, interlacing, palettes, unknown
+ancillary chunks) stay `unknown`, never `verified`. Formats with no decoder
+here are signature-only, with `content_acceptance: "unknown"` and
+`verified: false`. Content fields are group-scoped over the full requested
+frame set: `full_decode`/`verified` require a decodable check for every
+required frame, so missing or empty outputs never make the group
+content-verified. A frame set truncated by `max_frames` or collapsed by a
+literal path is only partially checked, so the group stays `unknown` too.
+Only a matching PNG within the byte budget has its body read; signature-only
+formats read just their magic. A literal path reports the final actually
+requested frame (`first + (count - 1) * step`), never the upper bound.
+Spec-legal PNG dimensions above this validator's local decode budget are a
+capability limit (`unknown`), not an illegal IHDR. The wrapper's `unknown`
+verdict does not weaken this independent verifier.
 
 All probes are read-only. None mutates the script, starts a server, executes
 user module code, reads credentials, or makes a network or paid call.

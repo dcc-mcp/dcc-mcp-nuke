@@ -242,6 +242,80 @@ def _registered_global_callback_nuke(monkeypatch, actual_path, stale_path, *, un
     return nuke, write
 
 
+def _global_restore_callback_nuke(monkeypatch, stale_path, actual_path):
+    """Fake Nuke modeling process-wide handlers registered through the public
+    ``nuke.addBeforeFrameRender`` / ``nuke.addAfterRender`` API.
+
+    A ``beforeFrameRender`` handler repoints the Write ``file`` knob to
+    ``actual_path`` and the render writes the real frame there; an
+    ``afterRender`` handler restores ``file`` to the original ``stale_path``
+    template. All four Write-node callback knobs stay empty and the raw ``file``
+    knob is EQUAL before and after ``execute()``. Endpoint comparison therefore
+    cannot detect the change: a single post-execute active filename plus equal
+    ``file`` knob endpoints is not proof of the output path set.
+
+    In-process fake only; NOT native Nuke render acceptance. The wrapper never
+    executes or parses these handlers; the fake host invokes them in the
+    documented callback order, and the wrapper can only observe the four empty
+    node knobs. No host is launched and no user script is parsed.
+    """
+    values = {
+        "file": stale_path,
+        "frame_mode": "expression",
+        "frame": "frame",
+        "file_type": "png",
+        "beforeRender": "",
+        "beforeFrameRender": "",
+        "afterFrameRender": "",
+        "afterRender": "",
+    }
+
+    class Knob:
+        def __init__(self, value):
+            self.data = value
+
+        def value(self):
+            return self.data
+
+    knobs = {name: Knob(value) for name, value in values.items()}
+
+    class Write:
+        def Class(self):
+            return "Write"
+
+        def __getitem__(self, name):
+            return knobs[name]
+
+    write = Write()
+    before_frame, after_render = [], []
+
+    def filename(_node):
+        return knobs["file"].value()  # ACTIVE file knob, read live
+
+    def execute(_node, first, last, step):
+        # nuke.addBeforeFrameRender handlers run once per frame ...
+        for frame in range(first, last + 1, step):
+            for callback in before_frame:
+                callback()
+            Path(str(knobs["file"].value()).replace("%04d", f"{frame:04d}")).write_bytes(_PNG)
+        # ... then nuke.addAfterRender handlers restore the original template.
+        for callback in after_render:
+            callback()
+
+    nuke = ModuleType("nuke")
+    nuke.toNode = lambda _name: write
+    nuke.filename = filename
+    nuke.execute = MagicMock(side_effect=execute)
+    nuke.addBeforeFrameRender = before_frame.append
+    nuke.addAfterRender = after_render.append
+    # Register the handlers exactly as a real init.py/menu.py would: the wrapper
+    # has no public API to enumerate them, so it cannot see these registrations.
+    nuke.addBeforeFrameRender(lambda: setattr(knobs["file"], "data", actual_path))
+    nuke.addAfterRender(lambda: setattr(knobs["file"], "data", stale_path))
+    monkeypatch.setitem(sys.modules, "nuke", nuke)
+    return nuke, write, knobs
+
+
 def _load_render_module():
     path = (
         Path(__file__).parent.parent
@@ -256,6 +330,32 @@ def _load_render_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _assert_unknown_readback(result, *, output_path=None):
+    """The honest host-derived readback shape: always unknown, never a positive.
+
+    A process-wide callback can repoint ``file`` during ``execute`` and restore
+    it afterwards, so the wrapper renders normally but never claims verified
+    output and never performs a filesystem readback. The genuinely provable,
+    independent contract is ``dcc_mcp_nuke.diagnostics.verify_render_output``
+    with an explicit caller-supplied path, tested separately against files.
+    """
+    assert result["success"] is True  # a render, not an invented failure
+    assert result["postcondition"]["verified"] is False
+    verification = result["context"]["output_verification"]
+    assert verification["verified"] is False
+    assert verification["mode"] == "unknown"
+    assert verification["content_validation"] == "not_performed"
+    assert verification["content_acceptance"] == "unknown"
+    assert verification["content_checks"] == {}
+    assert verification["expected_frames"] == []
+    assert verification["native_render_acceptance"] == "not_performed"
+    assert "callback" in verification["reason"]
+    assert "NOT native Nuke render acceptance" in verification["scope"]
+    if output_path is not None:
+        assert result["context"]["output_path"] == output_path  # informational only
+    return verification
 
 
 def test_render_write_node_forwards_step(monkeypatch):
@@ -283,7 +383,14 @@ def test_render_write_node_returns_error_for_invalid_range_or_step(monkeypatch, 
     assert result["error"] == error
 
 
-def test_render_write_node_proves_real_output_files_after_execute(monkeypatch, tmp_path):
+def test_render_write_node_reports_unknown_even_with_real_output_files(monkeypatch, tmp_path):
+    """Decodable files on disk do NOT make a host-derived readback provable.
+
+    A process-wide callback could have repointed ``file`` during execute and
+    restored it, so the wrapper renders normally but never claims verified
+    output. The independent filesystem contract is verified directly in
+    ``test_diagnostics*.py``, not through this host-derived path.
+    """
     module = _load_render_module()
     directory = tmp_path / "renders"
     directory.mkdir()
@@ -295,13 +402,7 @@ def test_render_write_node_proves_real_output_files_after_execute(monkeypatch, t
     result = module.main.__wrapped__("Final", 1, 3, step=1)
 
     nuke.execute.assert_called_once_with(write, 1, 3, 1)
-    assert result["success"] is True
-    assert result["postcondition"]["verified"] is True
-    verification = result["context"]["output_verification"]
-    assert verification["verified"] is True
-    assert verification["mode"] == "sequence"
-    assert verification["checked_frame_count"] == 3
-    assert verification["native_render_acceptance"] == "not_performed"
+    _assert_unknown_readback(result, output_path=str(directory / "final.%04d.png"))
 
 
 def test_successful_execute_without_output_files_is_not_verified(monkeypatch, tmp_path):
@@ -313,12 +414,9 @@ def test_successful_execute_without_output_files_is_not_verified(monkeypatch, tm
     result = module.main.__wrapped__("Final", 1, 3, step=1)
 
     nuke.execute.assert_called_once_with(write, 1, 3, 1)
-    assert result["success"] is True
-    assert result["postcondition"]["verified"] is False
-    verification = result["context"]["output_verification"]
-    assert verification["verified"] is False
-    assert verification["missing_frames"] == [1, 2, 3]
-    assert "NOT native Nuke render acceptance" in verification["scope"]
+    # No files exist AND no host-derived path set can be proven: the verdict is
+    # the same honest unknown shape, never a filesystem "missing frames" claim.
+    _assert_unknown_readback(result, output_path=str(tmp_path / "missing.%04d.png"))
 
 
 def test_unverifiable_output_path_is_explicitly_unknown(monkeypatch):
@@ -342,8 +440,9 @@ def test_unverifiable_output_path_is_explicitly_unknown(monkeypatch):
 # Fake Nuke host only; NOT native Nuke render acceptance.
 
 
-def test_proxy_mode_uses_the_active_filename(monkeypatch, tmp_path):
-    """In proxy mode nuke.filename(node) is the active path, not the file knob."""
+def test_proxy_mode_reports_active_filename_as_information_only(monkeypatch, tmp_path):
+    """In proxy mode nuke.filename(node) is the active path, reported as
+    information; it is never used to claim a verified render."""
     module = _load_render_module()
     full_size = tmp_path / "full.%04d.png"
     active = tmp_path / "proxy.%04d.png"
@@ -355,14 +454,12 @@ def test_proxy_mode_uses_the_active_filename(monkeypatch, tmp_path):
     result = module.main.__wrapped__("Final", 1, 1)
 
     nuke.filename.assert_called_once_with(write)
-    assert result["context"]["output_path"] == str(active)
-    verification = result["context"]["output_verification"]
-    assert verification["verified"] is True
-    assert verification["binding"]["output_path"] == str(active)
+    _assert_unknown_readback(result, output_path=str(active))
 
 
 def test_proxy_mode_does_not_verify_a_stale_full_size_file(monkeypatch, tmp_path):
-    """Only the stale full-size file exists: the active proxy output is missing."""
+    """Only the stale full-size file exists: the wrapper still reports unknown,
+    never a filesystem 'missing frame' verdict on the active proxy path."""
     module = _load_render_module()
     full_size = tmp_path / "full.%04d.png"
     active = tmp_path / "proxy.%04d.png"
@@ -372,32 +469,31 @@ def test_proxy_mode_does_not_verify_a_stale_full_size_file(monkeypatch, tmp_path
 
     result = module.main.__wrapped__("Final", 1, 1)
 
-    assert result["postcondition"]["verified"] is False
-    verification = result["context"]["output_verification"]
-    assert verification["binding"]["output_path"] == str(active)
-    assert verification["missing_frames"] == [1]
+    _assert_unknown_readback(result, output_path=str(active))
 
 
-def test_offset_mapping_verifies_the_rendered_frame_number(monkeypatch, tmp_path):
-    """frame_mode=offset with frame=-499 maps timeline 500 to output frame 1."""
+def test_offset_mapping_stays_unknown_without_proven_output_set(monkeypatch, tmp_path):
+    """frame_mode=offset with frame=-499 maps timeline 500 to output frame 1;
+    the pure arithmetic helper is genuinely provable and tested directly, but
+    the host-derived readback still cannot prove the render used that path."""
     module = _load_render_module()
     active = tmp_path / "shot.%04d.png"
     (tmp_path / "shot.0001.png").write_bytes(_PNG)
     (tmp_path / "shot.0500.png").write_bytes(_PNG)  # stale timeline-named file
 
-    _fake_nuke(monkeypatch, str(active), frame_mode="offset", frame=-499)
+    _, write = _fake_nuke(monkeypatch, str(active), frame_mode="offset", frame=-499)
+
+    # The independently provable arithmetic contract stays covered.
+    assert module._output_frame_bounds(write, 500, 500) == (1, 1, "offset:-499")
 
     result = module.main.__wrapped__("Final", 500, 500)
 
-    verification = result["context"]["output_verification"]
-    assert verification["verified"] is True
-    assert verification["expected_frames"] == [1]
-    assert verification["output_frame_mapping"]["timeline_first_frame"] == 500
-    assert verification["output_frame_mapping"]["first_output_frame"] == 1
+    _assert_unknown_readback(result, output_path=str(active))
 
 
 def test_offset_mapping_never_validates_a_stale_timeline_file(monkeypatch, tmp_path):
-    """The real renumbered output is absent; a stale timeline file must not pass."""
+    """The real renumbered output is absent; a stale timeline file must never
+    yield a positive verdict, and the wrapper reports fail-closed unknown."""
     module = _load_render_module()
     active = tmp_path / "shot.%04d.png"
     (tmp_path / "shot.0500.png").write_bytes(_PNG)  # stale timeline-named file
@@ -406,24 +502,23 @@ def test_offset_mapping_never_validates_a_stale_timeline_file(monkeypatch, tmp_p
 
     result = module.main.__wrapped__("Final", 500, 500)
 
-    assert result["postcondition"]["verified"] is False
-    verification = result["context"]["output_verification"]
-    assert verification["expected_frames"] == [1]
-    assert verification["missing_frames"] == [1]
+    _assert_unknown_readback(result, output_path=str(active))
 
 
 def test_numeric_enum_frame_mode_is_resolved_without_guessing(monkeypatch, tmp_path):
-    """Real Nuke enum knobs return an index; values() yields the mode name."""
+    """Real Nuke enum knobs return an index; values() yields the mode name. The
+    pure resolver is provable; the host-derived verdict still stays unknown."""
     module = _load_render_module()
     active = tmp_path / "shot.%04d.png"
     (tmp_path / "shot.0001.png").write_bytes(_PNG)
 
-    _fake_nuke(monkeypatch, str(active), frame_mode=2, frame=-499)
+    _, write = _fake_nuke(monkeypatch, str(active), frame_mode=2, frame=-499)
+
+    assert module._output_frame_bounds(write, 500, 500) == (1, 1, "offset:-499")
 
     result = module.main.__wrapped__("Final", 500, 500)
 
-    assert result["context"]["output_verification"]["expected_frames"] == [1]
-    assert result["postcondition"]["verified"] is True
+    _assert_unknown_readback(result, output_path=str(active))
 
 
 def test_start_at_mapping_is_unknown_without_a_proven_sequence_origin(monkeypatch, tmp_path):
@@ -510,9 +605,10 @@ def test_unresolvable_mapping_is_unknown_not_stale_verification(monkeypatch, tmp
 # Fake Nuke host only; NOT native Nuke render acceptance.
 
 
-def test_before_render_path_change_verifies_the_post_execute_output(monkeypatch, tmp_path):
+def test_before_render_path_change_reports_post_execute_path_as_information(monkeypatch, tmp_path):
     """beforeRender runs inside execute() and may change the active path; the
-    wrapper must bind and verify the post-execute path, not the stale one."""
+    wrapper reports the post-execute filename as information but never binds or
+    verifies it -- a process-wide callback could have changed it again."""
     module = _load_render_module()
     old = str(tmp_path / "old.%04d.png")
     new = str(tmp_path / "new.%04d.png")
@@ -523,15 +619,13 @@ def test_before_render_path_change_verifies_the_post_execute_output(monkeypatch,
 
     result = module.main.__wrapped__("Final", 1, 1)
 
-    verification = result["context"]["output_verification"]
-    assert result["context"]["output_path"] == new
-    assert verification["binding"]["output_path"] == new
-    assert result["postcondition"]["verified"] is True
+    _assert_unknown_readback(result, output_path=new)
 
 
 def test_stale_pre_execute_path_is_not_verified_when_callback_changes_output(monkeypatch, tmp_path):
-    """A stale pre-execute file must not be accepted when beforeRender moved the
-    active path and the new output is missing."""
+    """A stale pre-execute file must not be accepted: with no output at the
+    post-callback path, the wrapper still reports unknown, never a filesystem
+    'missing frames' verdict on a host-derived path."""
     module = _load_render_module()
     old = str(tmp_path / "old.%04d.png")
     new = str(tmp_path / "new.%04d.png")
@@ -542,11 +636,7 @@ def test_stale_pre_execute_path_is_not_verified_when_callback_changes_output(mon
 
     result = module.main.__wrapped__("Final", 1, 1)
 
-    verification = result["context"]["output_verification"]
-    assert result["context"]["output_path"] == new
-    assert verification["binding"]["output_path"] == new
-    assert result["postcondition"]["verified"] is False
-    assert verification["missing_frames"] == [1]
+    _assert_unknown_readback(result, output_path=new)
 
 
 def test_per_frame_callback_forces_unknown_verification(monkeypatch, tmp_path):
@@ -656,25 +746,71 @@ def test_registered_global_callback_forces_unknown_verification(monkeypatch, tmp
         assert result["context"]["output_path"] == stale
 
 
+def test_global_restore_callback_forces_unknown_verification(monkeypatch, tmp_path):
+    """A process-wide handler can repoint ``file`` to ``actual`` during
+    ``execute()`` and restore the original ``stale`` template afterwards.
+
+    With all four Write callback knobs empty and equal pre/post raw ``file``
+    knob values, endpoint difference detection sees nothing: the wrapper would
+    otherwise verify the pre-existing, decodable ``stale.0001.png`` even though
+    the render really wrote ``actual.0001.png``. Nuke exposes no public API to
+    enumerate registered/removed global handlers or to obtain an actual-path
+    receipt, so this case is observationally identical to a clean render and
+    MUST fail closed to ``unknown`` (never a false ``verified=true``).
+
+    Independently constructed correct-expectation regression (NOT a green
+    assertion on a probe that merely observes the bad behavior). In-process fake;
+    NOT native Nuke acceptance, no host launched, no user script parsed.
+    """
+    module = _load_render_module()
+    stale = str(tmp_path / "stale.%04d.png")
+    actual = str(tmp_path / "actual.%04d.png")
+    (tmp_path / "stale.0001.png").write_bytes(_PNG)  # pre-existing decodable file
+
+    nuke, write, knobs = _global_restore_callback_nuke(monkeypatch, stale, actual)
+
+    result = module.main.__wrapped__("Final", 1, 1)
+
+    nuke.execute.assert_called_once_with(write, 1, 1, 1)
+    # The registered handlers really rendered to `actual` and restored `file`.
+    assert knobs["file"].value() == stale
+    assert (tmp_path / "actual.0001.png").read_bytes() == _PNG
+    assert result["success"] is True  # a render, not an invented failure
+    assert result["postcondition"]["verified"] is False
+    verification = result["context"]["output_verification"]
+    assert verification["verified"] is False
+    assert verification["mode"] == "unknown"
+    assert verification["content_validation"] == "not_performed"
+    assert verification["content_acceptance"] == "unknown"
+    assert verification["content_checks"] == {}
+    assert verification["expected_frames"] == []
+    assert verification["native_render_acceptance"] == "not_performed"
+    assert "callback" in verification["reason"]
+    # The stale decodable file exists; it must never be accepted as proof, and
+    # the restored active filename is reported as best-effort information only.
+    assert (tmp_path / "stale.0001.png").read_bytes() == _PNG
+    assert result["context"]["output_path"] == stale
+
+
 # --- Output format binding -----------------------------------------------------
 # Fake Nuke host only; NOT native Nuke render acceptance.
 
 
 def test_exr_path_with_png_bytes_is_not_verified(monkeypatch, tmp_path):
-    """A PNG at an .exr output path must not be claimed verified: the wrapper
-    binds expected_format to the effective output format (exr)."""
+    """Format binding stays genuinely provable via the pure resolver, but the
+    host-derived readback never verifies a file, so wrong-format bytes cannot
+    produce a filesystem 'unreadable frame' verdict here."""
     module = _load_render_module()
     active = tmp_path / "shot.%04d.exr"
     (tmp_path / "shot.0001.exr").write_bytes(_PNG)  # wrong-format file
 
     _fake_nuke(monkeypatch, str(active))
 
+    assert module.resolve_output_format("", str(active)) == "exr"
+
     result = module.main.__wrapped__("Final", 1, 1)
 
-    verification = result["context"]["output_verification"]
-    assert result["postcondition"]["verified"] is False
-    assert verification["binding"]["expected_format"] == "exr"
-    assert verification["unreadable_frames"] == [1]
+    _assert_unknown_readback(result, output_path=str(active))
 
 
 def test_conflicting_file_type_and_path_stays_unknown(monkeypatch, tmp_path):
@@ -708,18 +844,19 @@ def test_unknown_output_format_stays_unknown(monkeypatch, tmp_path):
 
 
 def test_format_alias_is_normalized_for_binding(monkeypatch, tmp_path):
-    """The jpeg alias is normalized to jpg when binding expected_format."""
+    """The jpeg alias is normalized to jpg by the pure resolver. The wrapper
+    reports unknown rather than binding it to a host-derived file."""
     module = _load_render_module()
     active = tmp_path / "shot.%04d.jpeg"
     (tmp_path / "shot.0001.jpeg").write_bytes(_JPEG)
 
     _fake_nuke(monkeypatch, str(active), file_type="jpeg")
 
+    assert module.resolve_output_format("jpeg", str(active)) == "jpg"
+
     result = module.main.__wrapped__("Final", 1, 1)
 
-    verification = result["context"]["output_verification"]
-    assert verification["binding"]["expected_format"] == "jpg"
-    assert result["postcondition"]["verified"] is False  # jpg is signature-only
+    _assert_unknown_readback(result, output_path=str(active))
 
 
 def test_unreadable_file_type_stays_unknown_not_path_inferred(monkeypatch, tmp_path):
@@ -755,20 +892,20 @@ def test_unreadable_file_type_stays_unknown_not_path_inferred(monkeypatch, tmp_p
 
 def test_explicitly_empty_file_type_allows_path_extension_inference(monkeypatch, tmp_path):
     """A readable, explicitly empty file_type is NOT unreadable: path-extension
-    inference remains a proven, legal binding (real Write contract). Guards the
+    inference remains a proven, legal binding in the pure resolver. Guards the
     distinction so the unreadable-file_type fix cannot over-correct this case.
+    The wrapper still reports unknown because no host-derived output set can
+    be proven.
     """
     module = _load_render_module()
     active = tmp_path / "shot.%04d.exr"
     (tmp_path / "shot.0001.exr").write_bytes(_PNG)  # wrong-format bytes
 
-    _fake_nuke(monkeypatch, str(active), file_type="")
+    _, write = _fake_nuke(monkeypatch, str(active), file_type="")
+
+    assert module._file_type_name(write) == ""  # readable empty, not unreadable
+    assert module.resolve_output_format("", str(active)) == "exr"
 
     result = module.main.__wrapped__("Final", 1, 1)
 
-    verification = result["context"]["output_verification"]
-    # A "binding" key proves verification ran with a path-inferred format
-    # (mode would be "unknown" with no binding if empty collapsed to unreadable).
-    assert verification["binding"]["expected_format"] == "exr"
-    assert verification["unreadable_frames"] == [1]
-    assert result["postcondition"]["verified"] is False  # PNG bytes at .exr
+    _assert_unknown_readback(result, output_path=str(active))
