@@ -78,11 +78,16 @@ readback is never native Nuke render acceptance.
 
 The genuinely provable, independent filesystem verifier is
 `dcc_mcp_nuke.diagnostics.verify_render_output`, which requires an explicit,
-caller-supplied `output_path`. It binds `expected_format` to the Write
-`file_type` or a well-founded output path extension before any file is
-accepted; an unknown or contradictory format stays `unknown` instead of being
-read as "any format". Magic-number sniffing only confirms a candidate format
-against that binding, never native format acceptance. For PNG the verifier
+caller-supplied `output_path`. Format binding is the caller's job: when it is
+needed, the caller resolves a canonical `expected_format` with
+`resolve_output_format(file_type, output_path)` and passes it in explicitly;
+that helper returns `None` for a named-but-unsupported, contradictory or
+unrecognizable format. `verify_render_output` validates against the value it
+receives and knows nothing about the host's Write state. When
+`expected_format` is omitted (`None`), it keeps its existing
+signature-based detection; that result is NOT bound to the Nuke Write node's
+actual output format and must not be described as such. Signature detection
+is never native format acceptance. For PNG the verifier
 validates a strict, provable subset with the standard library: chunk lengths
 and CRCs, legal IHDR fields, required chunk ordering and bounded IDAT
 decompression. Unknown critical chunks and illegal structures fail; legal
