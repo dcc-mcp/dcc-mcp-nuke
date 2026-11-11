@@ -510,6 +510,10 @@ def verify_render_output(
     Formats with no decoder here are signature-only: their content acceptance
     stays unknown and ``verified`` stays false. A native ``nuke.execute``
     returning is not treated as proof.
+    ``content_validation``/``content_acceptance`` are group-scoped over the
+    full requested frame set: ``full_decode``/``verified`` require a decodable
+    content check for every required frame, so a missing or empty output can
+    never make the group look content-verified.
     This is a filesystem readback only; it is never native Nuke render
     acceptance and mock/temp fixtures do not prove a render.
     """
@@ -612,8 +616,14 @@ def verify_render_output(
         content_unverified.append(frame)
         content_checks[str(frame)] = "signature_only"
 
+    # content_checks records only frames that were present and non-empty; a
+    # missing or zero-byte frame continues without an entry. Requiring one
+    # check per checked frame prevents all([]) (all missing) or a partial
+    # all-decodable set (some missing) from being read as a full decode.
+    content_checks_complete = len(content_checks) == len(checked_frames)
     fully_decoded = (
         bool(checked_frames)
+        and content_checks_complete
         and not content_unverified
         and all(value == "decodable" for value in content_checks.values())
     )
