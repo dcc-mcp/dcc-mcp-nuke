@@ -6,6 +6,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+_PNG = b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR" + b"\x00" * 32
+
 
 def _load_render_module():
     path = (
@@ -52,3 +54,73 @@ def test_render_write_node_returns_error_for_invalid_range_or_step(monkeypatch, 
 
     assert result["success"] is False
     assert result["error"] == error
+
+
+def test_render_write_node_proves_real_output_files_after_execute(monkeypatch, tmp_path):
+    module = _load_render_module()
+    directory = tmp_path / "renders"
+    directory.mkdir()
+    for frame in (1, 2, 3):
+        (directory / f"final.{frame:04d}.png").write_bytes(_PNG)
+
+    write = MagicMock()
+    write.Class.return_value = "Write"
+    write.__getitem__.return_value.value.return_value = str(directory / "final.%04d.png")
+    nuke = ModuleType("nuke")
+    nuke.toNode = MagicMock(return_value=write)
+    nuke.execute = MagicMock()
+    monkeypatch.setitem(sys.modules, "nuke", nuke)
+
+    result = module.main.__wrapped__("Final", 1, 3, step=1)
+
+    nuke.execute.assert_called_once_with(write, 1, 3, 1)
+    assert result["success"] is True
+    assert result["postcondition"]["verified"] is True
+    verification = result["context"]["output_verification"]
+    assert verification["verified"] is True
+    assert verification["mode"] == "sequence"
+    assert verification["checked_frame_count"] == 3
+    assert verification["native_render_acceptance"] == "not_performed"
+
+
+def test_successful_execute_without_output_files_is_not_verified(monkeypatch, tmp_path):
+    """A returning nuke.execute must not be reported as verified output."""
+    module = _load_render_module()
+
+    write = MagicMock()
+    write.Class.return_value = "Write"
+    write.__getitem__.return_value.value.return_value = str(tmp_path / "missing.%04d.png")
+    nuke = ModuleType("nuke")
+    nuke.toNode = MagicMock(return_value=write)
+    nuke.execute = MagicMock(return_value=None)
+    monkeypatch.setitem(sys.modules, "nuke", nuke)
+
+    result = module.main.__wrapped__("Final", 1, 3, step=1)
+
+    nuke.execute.assert_called_once_with(write, 1, 3, 1)
+    assert result["success"] is True
+    assert result["postcondition"]["verified"] is False
+    verification = result["context"]["output_verification"]
+    assert verification["verified"] is False
+    assert verification["missing_frames"] == [1, 2, 3]
+    assert "NOT native Nuke render acceptance" in verification["scope"]
+
+
+def test_unverifiable_output_path_is_explicitly_unknown(monkeypatch):
+    module = _load_render_module()
+
+    write = MagicMock()
+    write.Class.return_value = "Write"
+    write.__getitem__.return_value.value.return_value = None
+    nuke = ModuleType("nuke")
+    nuke.toNode = MagicMock(return_value=write)
+    nuke.execute = MagicMock()
+    monkeypatch.setitem(sys.modules, "nuke", nuke)
+
+    result = module.main.__wrapped__("Final", 1, 1)
+
+    assert result["success"] is True
+    assert result["postcondition"]["verified"] is False
+    verification = result["context"]["output_verification"]
+    assert verification["mode"] == "unknown"
+    assert verification["native_render_acceptance"] == "not_performed"
