@@ -26,6 +26,29 @@ adjustments. Declare
 Each new layer connects to Nuke input A and the accumulated composite to input
 B, so `minus` evaluates `A-B`.
 
+`render_write_node` performs the normal render with `nuke.execute`, which still
+runs every configured callback (Write-node scripts and process-wide `nuke.add*`
+handlers registered in `init.py`/`menu.py`). It reads the active Write filename
+from `nuke.filename(node)` AFTER `nuke.execute` returns (proxy-aware, sequence
+placeholders preserved), but reports it as INFORMATIONAL context only: the
+wrapper never claims to verify host-derived output. Nuke exposes no public API
+to enumerate process-wide render callbacks, to observe a handler
+registered/removed during `execute()`, or to obtain a receipt of the path(s)
+actually written. A callback can repoint the Write `file` knob during the
+render and restore the original template afterwards, leaving all four node
+callback knobs empty and the raw `file` knob equal before and after
+`execute()`. That change-and-restore case is observationally identical to a
+clean render from every public-API observation, so endpoint comparison, empty
+before/after knob snapshots and a single final filename cannot prove the
+complete output path set. The readback therefore fails closed to `unknown` for
+EVERY render, never a false `verified=true` on a stale or wrong file; this is
+a host limitation, not a render failure. The readback never executes or parses
+callback scripts. The genuinely provable, independent file verification
+contract is `dcc_mcp_nuke.diagnostics.verify_render_output`, which inspects an
+explicit, caller-supplied output path and is deliberately not used here to
+bless a host-derived single filename. The readback is filesystem-only, never
+native Nuke render acceptance.
+
 The builder adds nodes through the same checked CRUD creation path as
 `nuke-node-graph`. Existing nodes, names, connections, knob values, and selection
 are preserved. Name collisions receive new unique names, returned in the result.

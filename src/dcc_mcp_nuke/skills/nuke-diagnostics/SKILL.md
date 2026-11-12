@@ -1,10 +1,11 @@
 ---
 name: nuke-diagnostics
 description: >-
-  Host readiness diagnostics for a live Nuke adapter. Use for a bounded,
-  read-only main-thread ping, host flavor detection, and capability
-  reporting across Nuke, NukeX, and Nuke Studio. Not for script execution or
-  graph mutation.
+  Host readiness and install diagnostics for a live Nuke adapter. Use for a
+  bounded, read-only main-thread ping, host flavor detection, capability
+  reporting across Nuke, NukeX, and Nuke Studio, post-install dependency
+  diagnosis, and execution-source/billing transparency. Not for script
+  execution or graph mutation.
 license: MIT
 compatibility: "Nuke 14+; Python 3.9+; dcc-mcp-core 0.20.8+"
 allowed-tools: Python
@@ -13,8 +14,8 @@ metadata:
     dcc: nuke
     version: "0.0.0"
     layer: infrastructure
-    search-hint: "nuke diagnostics ping readiness main thread host version flavor nukex studio"
-    tags: "nuke, diagnostics, read-only, host-flavor"
+    search-hint: "nuke diagnostics ping readiness main thread host version flavor nukex studio install dependency billing"
+    tags: "nuke, diagnostics, read-only, host-flavor, install-sop, billing-transparency"
     tools: tools.yaml
 ---
 
@@ -37,4 +38,74 @@ but distinct processes/versions can have different Python, Qt, startup and licen
 constraints. Standalone Hiero bootstrap is not yet supported. Select the intended
 live instance, inspect the shipped tool schema and respect the host-flavor gate.
 
-Both probes are read-only. Neither mutates the script nor starts a server.
+Use `nuke_diagnostics__diagnose_dependencies` after following install.md but
+still seeing missing nodes or modules. It distinguishes Nuke's embedded Python
+from an external CPython, locates module specs without importing or executing
+any module code, and inventories third-party plug-ins without loading them.
+A locatable spec is reported as `discoverable` with `import_tested: false`,
+never as `importable`/`verified`; dotted names and transitive dependencies that
+cannot be checked without running parent-package code stay `unknown`. Its
+`repair` hint is conditional: discoverability alone does not prove
+importability, so if the import fails in Nuke's embedded interpreter the user
+is told to check transitive dependencies and the host environment. It never
+claims "No action needed" for an untested import. A miss by the standard
+spec-locating finders also stays `unknown`: custom import hooks, cached finders
+and host plug-in paths are never consulted, so a standard miss is not global
+unavailability. A caller-supplied lookup keeps its own explicit certainty. A
+missing Nuke version contract and third-party ComfyUI reports are never turned
+into a causal claim. The report never installs, loads, or prints credentials.
+
+Use `nuke_diagnostics__describe_execution_sources` to answer where work runs
+and whether any cloud model, provider, pricing, API key or paid call is added.
+The adapter executes locally in the live Nuke process, with an optional bounded
+local NukeX subprocess for Foundry AIR CPU nodes. This repository declares no
+cloud integration, no billing estimate, no BYO API key and no paid calls; those
+belong to the surrounding MCP host/CLI and are explicitly unknown here. Native
+host verification remains `not_performed`.
+
+Output readback has two distinct, deliberately separate contracts. The
+`nuke_layered_compositing__render_write_node` wrapper performs the normal
+`nuke.execute` render and reports its post-execute active filename as
+INFORMATIONAL context only. Nuke exposes no public API to enumerate
+process-wide `nuke.add*` render callbacks, to observe a handler
+registered/removed during `execute()`, or to obtain a receipt of the path(s)
+actually written; a callback can repoint the Write `file` knob during the
+render and restore it afterwards. That change-and-restore case is
+observationally identical to a clean render, so the wrapper fails closed to
+`unknown` for EVERY render and never claims `verified=true` on a host-derived
+single filename. A returning `nuke.execute` is not proof, and a filesystem
+readback is never native Nuke render acceptance.
+
+The genuinely provable, independent filesystem verifier is
+`dcc_mcp_nuke.diagnostics.verify_render_output`, which requires an explicit,
+caller-supplied `output_path`. Format binding is the caller's job: when it is
+needed, the caller resolves a canonical `expected_format` with
+`resolve_output_format(file_type, output_path)` and passes it in explicitly;
+that helper returns `None` for a named-but-unsupported, contradictory or
+unrecognizable format. `verify_render_output` validates against the value it
+receives and knows nothing about the host's Write state. When
+`expected_format` is omitted (`None`), it keeps its existing
+signature-based detection; that result is NOT bound to the Nuke Write node's
+actual output format and must not be described as such. Signature detection
+is never native format acceptance. For PNG the verifier
+validates a strict, provable subset with the standard library: chunk lengths
+and CRCs, legal IHDR fields, required chunk ordering and bounded IDAT
+decompression. Unknown critical chunks and illegal structures fail; legal
+features it cannot prove (indexed color, interlacing, palettes, unknown
+ancillary chunks) stay `unknown`, never `verified`. Formats with no decoder
+here are signature-only, with `content_acceptance: "unknown"` and
+`verified: false`. Content fields are group-scoped over the full requested
+frame set: `full_decode`/`verified` require a decodable check for every
+required frame, so missing or empty outputs never make the group
+content-verified. A frame set truncated by `max_frames` or collapsed by a
+literal path is only partially checked: never `verified`. The group stays
+`unknown` when the checked frames are sound, but `failed` if any is invalid.
+Only a matching PNG within the byte budget has its body read; signature-only
+formats read just their magic. A literal path reports the final actually
+requested frame (`first + (count - 1) * step`), never the upper bound.
+Spec-legal PNG dimensions above this validator's local decode budget are a
+capability limit (`unknown`), not an illegal IHDR. The wrapper's `unknown`
+verdict does not weaken this independent verifier.
+
+All probes are read-only. None mutates the script, starts a server, executes
+user module code, reads credentials, or makes a network or paid call.
