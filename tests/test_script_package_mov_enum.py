@@ -199,3 +199,56 @@ def test_signature_value_still_normalizes_colorspace_default_label(label):
     color = Colorspace()
     color.raw = label
     assert _sig_value("colorspace", color, label) == ("native_write_default_colorspace", 0)
+
+
+# --- Unsupported serialization shapes stay raw (GH #110 guard hardening) -----
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "changed-before {0}",  # text before the index token
+        "{0} changed-after",  # unquoted trailing text
+        "{0} {2}",  # a second index token
+    ],
+)
+def test_unsupported_mov_serialization_shapes_stay_raw(raw):
+    """Only a complete index (+ quoted menu labels) serialization is normalized."""
+    knob = MovPixelFormat(raw=raw)
+    assert _sig_value("mov64_pixel_format", knob, raw) == raw
+
+
+def test_same_index_malformed_content_change_stays_detectable():
+    """A real content change at a fixed index must not collapse to one token."""
+    before = "{0} original-user-content"
+    after = "{0} changed-user-content"
+    knob = MovPixelFormat()
+    before_sig = _sig_value("mov64_pixel_format", knob, before)
+    after_sig = _sig_value("mov64_pixel_format", knob, after)
+    assert before_sig == before
+    assert after_sig == after
+    assert before_sig != after_sig
+
+
+def test_cold_menu_with_multiple_labels_is_normalized():
+    """A full cold menu (index + several quoted labels) is still the GH #110 shape."""
+    raw = '{0}\n  "yuv420p\\tYCbCr 4:2:0 8-bit"\n  "yuv422p\\tYCbCr 4:2:2 8-bit"'
+    knob = MovPixelFormat(raw=raw)
+    assert _sig_value("mov64_pixel_format", knob, raw) == (
+        "native_mov_pixel_format",
+        "mov64_pixel_format",
+        0,
+    )
+
+
+def test_malformed_same_index_content_change_is_still_rejected(tmp_path):
+    """The scene guard must still refuse a real same-index content change."""
+    mov = MovPixelFormat()
+
+    def mutate(knobs):
+        knobs["mov64_pixel_format"].raw = "{0} changed-user-content"
+
+    nuke = _build(tmp_path, mov, mutate)
+    with pytest.raises(FileReferenceRuntimeError) as error:
+        script_package.package_script(nuke, str(tmp_path / "package"), frame_mode="used", dry_run=True)
+    assert error.value.context["reason"] == "scene_changed_since_snapshot"
