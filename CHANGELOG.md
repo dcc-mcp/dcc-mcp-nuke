@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.21.0](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.20.4...v0.21.0) (2026-11-12)
+
+
+### Features
+
+* **diagnostics:** report install dependencies, execution sources and verified frame outputs ([#124](https://github.com/dcc-mcp/dcc-mcp-nuke/issues/124)) ([2fe4841](https://github.com/dcc-mcp/dcc-mcp-nuke/commit/2fe4841fac8561b61dbe34f963c340719da1f78d))
+
 ## [0.20.4](https://github.com/dcc-mcp/dcc-mcp-nuke/compare/v0.20.3...v0.20.4) (2026-11-10)
 
 
