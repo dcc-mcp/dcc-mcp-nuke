@@ -128,10 +128,15 @@ def _native_mov_pixel_format(node, name, knob, value):
 
     Collapse both the cold and evaluated serializations to the selected index so
     the guard compares the real, semantic selection. A genuine user change to a
-    different pixel format still moves the index and is rejected. Only a static,
-    recognized Write MOV pixel-format enumeration whose serialization is a pure
-    index selection is normalized; anything else keeps its raw value and stays
-    guarded.
+    different pixel format still moves the index and is rejected.
+
+    A static, recognized Write MOV pixel-format enumeration is normalized only
+    when the whole serialization has the supported shape: a leading index token
+    (``{N}``) optionally followed by whitespace and double-quoted menu labels,
+    exactly the cold/evaluated pair in GH #110. Any other shape (text before the
+    index, unquoted trailing text, a second index token, ...) keeps its raw value
+    and stays guarded, so a real content change at the same index cannot be
+    hidden. This is deliberately narrow, not a general Tcl decoder.
     """
     if (
         node.Class() != "Write"
@@ -141,8 +146,30 @@ def _native_mov_pixel_format(node, name, knob, value):
         or knob.hasExpression() is not False
     ):
         return None
-    match = _ENUM_INDEX_TOKEN.search(value)
+
+    def menu_labels_only(text):
+        """True when text is only whitespace and double-quoted menu labels."""
+        index = 0
+        length = len(text)
+        while index < length:
+            char = text[index]
+            if char in " \t\r\n":
+                index += 1
+            elif char == '"':
+                closing = text.find('"', index + 1)
+                if closing == -1:
+                    return False
+                index = closing + 1
+            else:
+                return False
+        return True
+
+    candidate = value.strip()
+    match = _ENUM_INDEX_TOKEN.match(candidate)
     if match is None:
+        return None
+    end = match.end()
+    if not menu_labels_only(candidate[end:]):
         return None
     return ("native_mov_pixel_format", name, int(match.group(1)))
 
